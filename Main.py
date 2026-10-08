@@ -1,15 +1,26 @@
 #!/usr/bin/python
 
-import tkinter as tkinter
-import tkinter.filedialog as filedialog
+import ttkbootstrap as tb
+from ttkbootstrap.constants import *
+import tkinter as tk
+from tkinter import filedialog
 from tkinter.font import nametofont
 import os
-from SongEditorPro7Generic import save_song, get_text_block_names
 import json
+from SongEditorPro7Generic import save_song, get_text_block_names
+from autocorrect import autocorrect_text, load_word_list, find_typos, get_spellchecker
+
+# --- Romanian Ș / ș / Ț / ț input fix ---
+REMEDIED_CHARS_STD = {ord(c): c for c in 'ȘșȚț'}
+
+def on_key_press(event):
+    char = REMEDIED_CHARS_STD.get(event.keysym_num)
+    if char:
+        event.widget.insert('insert', char)
+        return "break"
 
 
 def get_download_path():
-    """Returns the default downloads path for linux or windows"""
     if os.name == 'nt':
         import winreg
         sub_key = r'SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders'
@@ -21,128 +32,315 @@ def get_download_path():
         return os.path.join(os.path.expanduser('~'), 'Downloads')
 
 
-class simpleapp_tk(tkinter.Tk):
-    def __init__(self, parent, output_dir="", text_block_names=None):
-        self.output_dir = output_dir
-        tkinter.Tk.__init__(self, parent)
-        self.parent = parent
-        self.initialize()
-        self.labelMessageText = None
+class SongEditorApp(tb.Window):
+    def __init__(self, text_block_names, output_dir):
+        super().__init__(themename="darkly")  # Modern dark mode
+        self.title("ProPresenter7 Song Editor — Modern UI")
+        self.geometry("1300x850")
+
         self.text_block_names = text_block_names
+        self.output_dir = output_dir
+        self.text_widgets = {}
 
-    def multiple_view(self, *args):
-        for songEntry in self.songEntries:
-            songEntry.yview(*args)
+        self.grid_rowconfigure(1, weight=1)
+        self.grid_columnconfigure(0, weight=1)
 
-    def initialize(self):
-        self.labelTitle = tkinter.Label(self, text="Song name:")
-        self.labelTitle.pack()
-        self.labelTitle.place(x=5, y=20)
-        self.entryTitle = tkinter.StringVar()
-        self.entry1 = tkinter.Entry(self, textvariable=self.entryTitle, bg='#e0e0e0')
-        self.entry1.config(width=57)
-        self.entry1.place(x=95, y=20)
+        self.init_ui()
 
-        self.labelTitleCount = tkinter.Label(self, text="Number of lines per slide:")
-        self.labelTitleCount.pack()
-        self.labelTitleCount.place(x=5, y=60)
-        self.entryLineCount = tkinter.StringVar()
-        self.entry2 = tkinter.Entry(self, textvariable=self.entryLineCount, bg="#e0e0e0")
-        self.entry2.config(width=6)
-        self.entry2.place(x=175, y=60)
-        self.entryLineCount.set("2")
+    def bind_unicode_fix(self, widget):
+        widget.bind("<KeyPress>", on_key_press)
 
-        self.ScrollBar = tkinter.Scrollbar(self)
-        self.ScrollBar.config(command=self.multiple_view)
-        self.ScrollBar.pack(side=tkinter.RIGHT, fill=tkinter.Y)
-        self.songEntries = []
-        for index, text_block_name in enumerate(text_block_names):
-            self.labelSongText = tkinter.Label(self, text=text_block_name)
-            self.labelSongText.pack()
-            self.labelSongText.place(x=5+index*520, y=100)
-            entrySongText = tkinter.Text(width=64, height=38)
-            entrySongText.config(yscrollcommand=self.ScrollBar.set, bg='#e0e0e0')
-            entrySongText.config(bg='#e0e0e0')
-            entrySongText.pack()
-            entrySongText.place(x=5+index*520, y=125)
-            self.songEntries.append(entrySongText)
+    # ---------------------------------------------------------
+    # UI BUILD
+    # ---------------------------------------------------------
+    def init_ui(self):
 
-        with open("GroupNames.txt", "r") as group_names:
-            labels = group_names.read().split("\n")
-        label_string = ""
-        num_labels_per_line = 13
-        for index in range((len(labels)//num_labels_per_line)+1):
-            label_string += "  ".join(labels[index*num_labels_per_line:(index+1)*num_labels_per_line]) + "\n"
+        # Header (modern card)
+        header = tb.Frame(self, padding=10, bootstyle="secondary")
+        header.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
+        header.grid_columnconfigure(2, weight=1)
 
-        self.labelHint = tkinter.Label(self, text="Add group names to GroupNames.txt   \n" + label_string)
-        self.labelHint.pack()
-        self.labelHint.place(x=230, y=780)
+        tb.Label(header, text="Song Name:", bootstyle="light").grid(row=0, column=0, sticky="w")
+        self.song_title = tb.Entry(header, width=40, bootstyle="info")
+        self.song_title.grid(row=0, column=1, padx=5)
+        self.bind_unicode_fix(self.song_title)
 
-        self.entryMessage = tkinter.Text(width=75, height=2)
-        self.entryMessage.place(x=10, y=870)
+        tb.Label(header, text="Lines per Slide:", bootstyle="light").grid(row=0, column=2, sticky="e")
+        self.line_count = tb.Entry(header, width=5, bootstyle="info")
+        self.line_count.insert(0, "2")
+        self.line_count.grid(row=0, column=3, padx=5)
+        self.bind_unicode_fix(self.line_count)
 
-        self.button = tkinter.Button(self, text=u"Save", command=self.on_button_save_click)
-        self.button.place(x=150, y=830)
+        tb.Button(header, text="Open", bootstyle="primary-outline", command=self.open_file).grid(row=0, column=4, padx=10)
+        tb.Button(header, text="Save", bootstyle="success-outline", command=self.save_song_action).grid(row=0, column=5)
+        tb.Button(header, text="Autocorrect", bootstyle="warning-outline", command=self.autocorrect_action).grid(row=0, column=6, padx=10)
+        tb.Button(header, text="Check Typos", bootstyle="danger-outline", command=self.check_typos_action).grid(row=0, column=7, padx=10)
 
-        self.button_open = tkinter.Button(self, text=u"Open recent", command=self.on_button_open_click)
-        self.button_open.place(x=20, y=830)
+        # Notebook
+        self.notebook = tb.Notebook(self, bootstyle="primary")
+        self.notebook.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
 
-    def on_button_open_click(self):
-        file_path_string = filedialog.askopenfilename(initialdir=self.output_dir,
-                                                      filetypes=[("song files", "*.json")])
+        self.compare_tab = tb.Frame(self.notebook)
+        self.single_tab = tb.Frame(self.notebook)
+        self.groupnames_tab = tb.Frame(self.notebook)
 
-        with open(file_path_string, 'rb') as f:
-            loaded_dict = json.load(f)
+        self.notebook.add(self.compare_tab, text="Translate View")
+        self.notebook.add(self.single_tab, text="Single View")
+        self.notebook.add(self.groupnames_tab, text="Edit Group Names")
 
-        for index, text_block_name in enumerate(self.text_block_names):
-            self.songEntries[index].delete(1.0, tkinter.END)  # required for linux
+        self.build_compare_tab()
+        self.build_single_tab()
+        self.build_groupnames_tab()
 
-        for index, text_block_name in enumerate(self.text_block_names):
-            self.songEntries[index].insert(tkinter.END, "\n".join(loaded_dict[text_block_name]).rstrip("\n"))
+        # Group Names Preview
+        self.label_hint = tb.Label(self, justify=tk.LEFT, wraplength=1000, bootstyle="secondary")
+        self.label_hint.grid(row=2, column=0, padx=10, pady=5, sticky="ew")
+        self.update_group_label_preview()
 
-        file_path_string.replace("\\", "/")
-        self.entryTitle.set(file_path_string.replace(".json", "").split("/")[-1])
+        # Status message
+        self.message_area = tk.Text(self, height=2, bg="#2b2b2b", fg="white")
+        self.message_area.grid(row=3, column=0, padx=10, pady=5, sticky="ew")
+        self.bind_unicode_fix(self.message_area)
 
-    def on_button_save_click(self):
-        title = self.entryTitle.get()
-        for char in r":\\|/?*&^%$#@!~`'\";,.<>"+"\r\n":
-            title.replace(char, " ")
+    # ---------------------------------------------------------
+    # TRANSLATE VIEW — Modern UI + Highlight + Zebra
+    # ---------------------------------------------------------
+    def build_compare_tab(self):
 
-        title = title.strip()
-        song_texts = {}
-        for index, text_block_name in enumerate(text_block_names):
-            song_texts[text_block_name] = self.songEntries[index].get("1.0", tkinter.END).split("\n")
+        self.compare_tab.grid_rowconfigure(0, weight=1)
+        self.compare_tab.grid_columnconfigure(0, weight=0)
+
+        for i in range(len(self.text_block_names)):
+            self.compare_tab.grid_columnconfigure(i+1, weight=1)
+
+        # Scrollbar
+        self.scrollbar = tb.Scrollbar(self.compare_tab, orient="vertical", bootstyle="info")
+        self.scrollbar.grid(row=0, column=len(self.text_block_names)+1, sticky="ns")
+
+        def sync_scroll(*args):
+            self.number_widget.yview(*args)
+            for widget in self.text_widgets.values():
+                widget.yview(*args)
+
+        self.scrollbar.config(command=sync_scroll)
+
+        # Number column
+        number_frame = tb.Frame(self.compare_tab, bootstyle="secondary")
+        number_frame.grid(row=0, column=0, sticky="nsew", padx=5)
+
+        tb.Label(number_frame, text="#", bootstyle="light").pack()
+        self.number_widget = tk.Text(number_frame, wrap=tk.NONE, width=4,
+                                     bg="#3a3a3a", fg="white", yscrollcommand=self.scrollbar.set)
+        self.number_widget.pack(expand=True, fill=tk.BOTH)
+        self.number_widget.bind("<Motion>", self.on_hover)
+
+        # Text columns
+        for col, name in enumerate(self.text_block_names):
+            frame = tb.Frame(self.compare_tab, bootstyle="secondary")
+            frame.grid(row=0, column=col+1, sticky="nsew", padx=5)
+
+            tb.Label(frame, text=name, bootstyle="light").pack()
+
+            text_widget = tk.Text(frame, wrap=tk.WORD, bg="#1e1e1e", fg="white",
+                                  yscrollcommand=self.scrollbar.set)
+            text_widget.pack(expand=True, fill=tk.BOTH)
+
+            self.bind_unicode_fix(text_widget)
+            self.text_widgets[name] = text_widget
+            text_widget.bind("<Motion>", self.on_hover)
+
+    # ---------------------------------------------------------
+    # HOVER HIGHLIGHT
+    # ---------------------------------------------------------
+    def on_hover(self, event):
+        index = event.widget.index(f"@0,{event.y}")
+        line = index.split(".")[0]
+
+        # Clear old highlight
+        for name in self.text_block_names:
+            self.text_widgets[name].tag_remove("hover", "1.0", tk.END)
+        self.number_widget.tag_remove("hover", "1.0", tk.END)
+
+        # Apply highlight
+        for name in self.text_block_names:
+            w = self.text_widgets[name]
+            w.tag_add("hover", f"{line}.0", f"{line}.end")
+            w.tag_config("hover", background="#004d40")  # teal highlight
+
+        self.number_widget.tag_add("hover", f"{line}.0", f"{line}.end")
+        self.number_widget.tag_config("hover", background="#004d40")
+
+    # ---------------------------------------------------------
+    # SINGLE VIEW
+    # ---------------------------------------------------------
+    def build_single_tab(self):
+        self.single_tab.grid_rowconfigure(0, weight=1)
+        self.single_tab.grid_columnconfigure(0, weight=1)
+
+        self.single_text = tk.Text(self.single_tab, wrap=tk.WORD, bg="#1e1e1e", fg="white")
+        self.single_text.grid(row=0, column=0, sticky="nsew")
+        self.bind_unicode_fix(self.single_text)
+
+    # ---------------------------------------------------------
+    # GROUP NAMES TAB
+    # ---------------------------------------------------------
+    def build_groupnames_tab(self):
+        self.groupnames_tab.grid_rowconfigure(1, weight=1)
+        self.groupnames_tab.grid_columnconfigure(0, weight=1)
+
+        tb.Label(self.groupnames_tab, text="Edit GroupNames.txt:", bootstyle="light").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+
+        self.groupnames_text = tk.Text(self.groupnames_tab, wrap=tk.WORD, bg="#1e1e1e", fg="white")
+        self.groupnames_text.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
+        self.bind_unicode_fix(self.groupnames_text)
+
+        tb.Button(self.groupnames_tab, text="Save Changes", bootstyle="success-outline", command=self.save_groupnames).grid(row=2, column=0, pady=10)
+
+        self.load_groupnames()
+
+    def load_groupnames(self):
+        try:
+            with open("GroupNames.txt", "r") as f:
+                self.groupnames_text.delete("1.0", tk.END)
+                self.groupnames_text.insert("1.0", f.read())
+        except:
+            self.groupnames_text.insert("1.0", "Could not load GroupNames.txt")
+
+    def save_groupnames(self):
+        content = self.groupnames_text.get("1.0", tk.END).strip()
+        try:
+            with open("GroupNames.txt", "w") as f:
+                f.write(content)
+            self.show_message("GroupNames.txt saved.")
+            self.update_group_label_preview(content)
+        except Exception as e:
+            self.show_message("Error saving GroupNames.txt: " + str(e))
+
+    def update_group_label_preview(self, content=None):
+        if content is None:
+            try:
+                with open("GroupNames.txt", "r") as f:
+                    content = f.read()
+            except:
+                content = ""
+        preview = "Group Names Preview:\n" + "  ".join(content.splitlines())
+        self.label_hint.config(text=preview)
+
+    # ---------------------------------------------------------
+    # OPEN FILE
+    # ---------------------------------------------------------
+    def open_file(self):
+        path = filedialog.askopenfilename(initialdir=self.output_dir, filetypes=[("JSON files", "*.json")])
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            for name in self.text_block_names:
+                self.text_widgets[name].delete("1.0", tk.END)
+                self.text_widgets[name].insert("1.0", "\n".join(data.get(name, [])))
+
+            max_len = max(len(data.get(name, [])) for name in self.text_block_names)
+            self.number_widget.delete("1.0", tk.END)
+            self.number_widget.insert("1.0", "\n".join(str(i+1) for i in range(max_len)))
+
+            self.song_title.delete(0, tk.END)
+            self.song_title.insert(0, os.path.basename(path).replace(".json", ""))
+
+            self.single_text.delete("1.0", tk.END)
+            self.single_text.insert("1.0", self.text_widgets[self.text_block_names[0]].get("1.0", tk.END))
+
+            self.show_message(f"Opened: {path}")
+        except Exception as e:
+            self.show_message("Error opening file: " + str(e))
+
+    # ---------------------------------------------------------
+    # SAVE SONG
+    # ---------------------------------------------------------
+    def save_song_action(self):
+        title = self.song_title.get().strip()
+        if not title:
+            self.show_message("Please enter a song title.")
+            return
+
+        for char in r":\\|/?*&^%$#@!~`'\";,.<>":
+            title = title.replace(char, " ")
+
+        song_texts = {name: self.text_widgets[name].get("1.0", tk.END).splitlines()
+                      for name in self.text_block_names}
 
         try:
-            title = title.rstrip()
-            output_filename = os.path.join(self.output_dir, title)
-            try:
-                max_line_count = int(self.entryLineCount.get())
-            except:
-                self.entryLineCount.set("2")
-                max_line_count = 2
+            max_lines = int(self.line_count.get())
+        except:
+            max_lines = 2
+            self.line_count.delete(0, tk.END)
+            self.line_count.insert(0, "2")
 
-            save_song(text_block_names, song_texts, max_line_count, output_filename)
+        max_len = max(len(song_texts[name]) for name in self.text_block_names)
+        self.number_widget.delete("1.0", tk.END)
+        self.number_widget.insert("1.0", "\n".join(str(i+1) for i in range(max_len)))
 
-            self.entryMessage.delete('1.0', tkinter.END)
-            self.entryMessage.insert(tkinter.END, 'import in Pro presenter: "file", "import", "import file", ' + output_filename)
-        except Exception as ne:
-            self.entryMessage.delete('1.0', tkinter.END)
-            self.entryMessage.insert(tkinter.END, "ERROR" + str(ne))
+        output_file = os.path.join(self.output_dir, title)
+
+        try:
+            save_song(self.text_block_names, song_texts, max_lines, output_file)
+            self.show_message(f"Saved! Import in ProPresenter: File → Import → {output_file}.pro")
+        except Exception as e:
+            self.show_message("Save failed: " + str(e))
+
+    # ---------------------------------------------------------
+    # AUTOCORRECT
+    # ---------------------------------------------------------
+    def autocorrect_action(self):
+        word_list = load_word_list()
+        for name in self.text_block_names:
+            w = self.text_widgets[name]
+            text = w.get("1.0", tk.END)
+            w.delete("1.0", tk.END)
+            w.insert("1.0", autocorrect_text(text, word_list))
+
+        first = self.text_block_names[0]
+        self.single_text.delete("1.0", tk.END)
+        self.single_text.insert("1.0", self.text_widgets[first].get("1.0", tk.END))
+
+        self.show_message("Autocorrect applied to all text boxes.")
+
+    # ---------------------------------------------------------
+    # CHECK TYPOS (highlight only)
+    # ---------------------------------------------------------
+    def check_typos_action(self):
+        spell = get_spellchecker()
+        total = 0
+        for name in self.text_block_names:
+            w = self.text_widgets[name]
+            w.tag_remove("typo", "1.0", tk.END)
+            text = w.get("1.0", tk.END)
+            for start, end, word in find_typos(text, spell):
+                start_idx = f"1.0+{start}c"
+                end_idx = f"1.0+{end}c"
+                w.tag_add("typo", start_idx, end_idx)
+                total += 1
+            w.tag_config("typo", background="#5c1a1a", foreground="#ff6b6b")
+        self.show_message(f"Found {total} possible typo(s). Highlighted in red.")
+
+    # ---------------------------------------------------------
+    # STATUS MESSAGE
+    # ---------------------------------------------------------
+    def show_message(self, msg):
+        self.message_area.delete("1.0", tk.END)
+        self.message_area.insert(tk.END, msg)
 
 
+# ---------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------
 if __name__ == "__main__":
     text_block_names = get_text_block_names()
-    num_languages = len(text_block_names)
-
     output_dir = get_download_path()
+    app = SongEditorApp(text_block_names, output_dir)
 
-    app = simpleapp_tk(None, output_dir=output_dir, text_block_names=text_block_names)
     default_font = nametofont("TkDefaultFont")
-    default_font.configure(size=8)
-
-    gui_with = 540*num_languages
-    app.geometry(str(gui_with) + "x930+0+0")
-    app.title('Song editor for ProPresenter7')
+    default_font.configure(family="Segoe UI", size=11)
 
     app.mainloop()

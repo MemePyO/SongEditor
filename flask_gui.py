@@ -1,6 +1,8 @@
 from flask import Flask, request, make_response
 from SongEditorPro7Generic import get_text_block_names, gen_pro_data
+from autocorrect import autocorrect_text, load_word_list, find_typos, get_spellchecker
 import json
+import re
 
 app = Flask(__name__)
 
@@ -66,9 +68,47 @@ def song_download(request):
     return response
 
 
+def autocorrect_action(request):
+    form_data = request.form
+    text_block_names = get_text_block_names()
+    corrected = {}
+    word_list = load_word_list()
+    for name in text_block_names:
+        text = form_data.get(name, "")
+        corrected[name] = autocorrect_text(text, word_list)
+    return corrected
+
+
+def check_typos_action(request):
+    form_data = request.form
+    text_block_names = get_text_block_names()
+    spell = get_spellchecker()
+    result = {}
+    for name in text_block_names:
+        text = form_data.get(name, "")
+        typos = find_typos(text, spell)
+        result[name] = typos
+    return result
+
+
+@app.route("/autocorrect", methods=["POST"])
+def autocorrect_route():
+    corrected = autocorrect_action(request)
+    return build_page(loaded_dict={}, corrected=corrected)
+
+
+@app.route("/check_typos", methods=["POST"])
+def check_typos_route():
+    typos = check_typos_action(request)
+    return build_page(loaded_dict={}, typos=typos)
+
+
 @app.route("/", methods=["GET", "POST"])
 def song_input():
-    loaded_dict = {}
+    return build_page(loaded_dict={})
+
+
+def build_page(loaded_dict, corrected=None, typos=None):
     # https://www.youtube.com/watch?v=mqhxxeeTbu0&list=PLzMcBGfZo4-n4vJJybUVV3Un_NFS5EOgX&index=1
     if request.method == "POST":
         if "action" in request.files:
@@ -92,11 +132,14 @@ def song_input():
         title += f"<th>{name}</th>"
 
     for name in text_block_names:
-        if name in loaded_dict:
+        if corrected and name in corrected:
+            song_text = corrected[name]
+        elif name in loaded_dict:
             song_text = "\n".join(loaded_dict[name]).rstrip("\n")
-            content += f"""<td><textarea  style="white-space:pre;" id ="{name}" name="{name}" rows="50" cols="50" class="linked" >{song_text}</textarea></td>\n"""
         else:
-            content += f"""<td><textarea  style="white-space:pre;" id ="{name}" name="{name}" rows="50" cols="50" class="linked" ></textarea></td>\n"""
+            song_text = ""
+        song_text = song_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        content += f"""<td><textarea  style="white-space:pre;" id ="{name}" name="{name}" rows="50" cols="50" class="linked" >{song_text}</textarea></td>\n"""
 
     with open("GroupNames.txt", "r") as group_names:
         labels = group_names.read().split("\n")
@@ -109,28 +152,60 @@ def song_input():
     if "song_title" in loaded_dict:
         song_title = loaded_dict["song_title"]
 
-    jquiry_scripts = """        <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script> 
-     <script>
-    $(function(){
+    typo_data = json.dumps(typos) if typos else "{}"
+
+    jquiry_scripts = """        <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+      <script>
+     $(function(){
     $('.linked').scroll(function(){
         $('.linked').scrollTop($(this).scrollTop());
-    })
+    });
 
 })
-</script>"""
+</script>
+      <script>
+     var typoData = """ + typo_data + """;
+     $(function(){
+       for (var name in typoData) {
+         var ta = document.getElementById(name);
+         if (!ta) continue;
+         var text = ta.value;
+         var result = '';
+         var last = 0;
+         var typos = typoData[name];
+         typos.sort(function(a,b){ return a[0]-b[0]; });
+         for (var i = 0; i < typos.length; i++) {
+           var start = typos[i][0], end = typos[i][1];
+           if (start < last) continue;
+           result += text.substring(last, start);
+           result += '<span class="typo">' + text.substring(start, end) + '</span>';
+           last = end;
+         }
+         result += text.substring(last);
+         var div = document.createElement('div');
+         div.className = 'typo-overlay';
+         div.style.cssText = 'position:absolute;top:0;left:0;white-space:pre;font-family:Courier New;font-size:inherit;padding:inherit;margin:0;pointer-events:none;';
+         div.innerHTML = result;
+         ta.style.position = 'relative';
+         ta.parentNode.style.position = 'relative';
+         ta.parentNode.appendChild(div);
+       }
+     });
+     </script>"""
     style = """            <style>
-            input[type=file]{
-                width:110px;
-                color:transparent;
-            }
-            textarea {
-            font-family: 'Courier New', monospace;
-            resize: none;
-            }
-            html * {
-               font-family: 'Sonus', 'Arial';
-            }
-            </style>"""
+             input[type=file]{
+             width:110px;
+             color:transparent;
+             }
+             textarea {
+             font-family: 'Courier New', monospace;
+             resize: none;
+             }
+             html * {
+                font-family: 'Sonus', 'Arial';
+             }
+             .typo { background-color: #ffcccc; border-bottom: 2px solid red; }
+             </style>"""
     html = f"""<!DOCTYPE html>
         <head>
             {jquiry_scripts}
@@ -155,6 +230,8 @@ def song_input():
             <br/><br/>
             <button type="submit" name="action" value=pro>Download .pro</button>
             <button type="submit" name="action" value=json>Download .json</button>
+            <button type="submit" formaction="/autocorrect">Autocorrect</button>
+            <button type="submit" formaction="/check_typos">Check Typos</button>
             <br/><br/>
             <label  name="json_file">Reload .json file:</label>
             <input type="file" name="action" value=load_json accept=".json" onchange="form.submit()" />
