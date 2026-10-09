@@ -1,2 +1,9 @@
 ﻿__pycache__/
 *.pyc
+dist/
+build/
+_internal/
+logs/
+*.pro
+*.json
+!autocorrect_words.txt
