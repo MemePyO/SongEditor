@@ -1,8 +1,16 @@
 import presentation_pb2
 from uuid import uuid1
 import json
+import os
+import sys
 
 TEMPLATE = 0
+
+
+def resource_path(relative_path):
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
 
 def make_uuid():
@@ -26,7 +34,7 @@ def add_que_group(presentation_obj, slide_label, slide_uuid):
 # ---------------------------------------------------------
 def split_slides(text_block_names, song_texts, max_line_count):
     # Load group labels
-    with open("GroupNames.txt", "r", encoding="utf-8") as f:
+    with open(resource_path("GroupNames.txt"), "r", encoding="utf-8") as f:
         raw_labels = f.read().splitlines()
 
     # Expand ranges like "Verse 1..3"
@@ -192,12 +200,13 @@ def inject_text_into_rtf(template_rtf_bytes, new_text_lines, font_size=None, fon
 # ---------------------------------------------------------
 def gen_pro_data(text_block_names, song_texts, line_count,
                  per_block_colors=None, per_block_styles=None,
-                 per_block_sizes=None, per_block_families=None):
+                 per_block_sizes=None, per_block_families=None,
+                 arrangement_order=None):
 
     sample_file = r"Template.pro"
     presentation_obj = presentation_pb2.Presentation()
 
-    with open(sample_file, "rb") as f:
+    with open(resource_path(sample_file), "rb") as f:
         presentation_obj.ParseFromString(f.read())
 
     presentation_obj.uuid.string = make_uuid()
@@ -302,13 +311,28 @@ def gen_pro_data(text_block_names, song_texts, line_count,
                 font_style=style, font_family=family
             )
 
+    if arrangement_order:
+        group_uuids = {}
+        for cg in presentation_obj.cue_groups:
+            group_uuids[cg.group.name] = cg.group.uuid.string
+
+        arrangement = presentation_obj.arrangements.add()
+        arrangement.uuid.string = make_uuid()
+        arrangement.name = "Duminica"
+        for part in arrangement_order.split(","):
+            name = part.strip()
+            if name in group_uuids:
+                arrangement.group_identifiers.add().string = group_uuids[name]
+
+        presentation_obj.selected_arrangement.string = arrangement.uuid.string
+
     return presentation_obj.SerializeToString()
 
 
 # ---------------------------------------------------------
 #  SAVE SONG
 # ---------------------------------------------------------
-def save_song(text_block_names, song_texts, line_count, output_filename, font_data=None):
+def save_song(text_block_names, song_texts, line_count, output_filename, font_data=None, arrangement_order=None):
 
     with open(output_filename + ".json", "w", encoding="utf-8") as f:
         json.dump(song_texts, f, ensure_ascii=False, indent=2)
@@ -336,7 +360,8 @@ def save_song(text_block_names, song_texts, line_count, output_filename, font_da
             per_block_colors=colors,
             per_block_styles=styles,
             per_block_sizes=sizes,
-            per_block_families=families
+            per_block_families=families,
+            arrangement_order=arrangement_order
         ))
 
 
@@ -346,7 +371,7 @@ def save_song(text_block_names, song_texts, line_count, output_filename, font_da
 def get_text_block_names():
     sample_file = r"Template.pro"
     presentation_obj = presentation_pb2.Presentation()
-    with open(sample_file, "rb") as f:
+    with open(resource_path(sample_file), "rb") as f:
         presentation_obj.ParseFromString(f.read())
     return [el.element.name for el in presentation_obj.cues[-1].actions[0].slide.presentation.base_slide.elements]
 

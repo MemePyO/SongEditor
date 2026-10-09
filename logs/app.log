@@ -1,0 +1,27 @@
+2026-10-09 23:25:20,529 [INFO] ============================================================
+2026-10-09 23:25:20,529 [INFO] Application started
+2026-10-09 23:25:20,536 [INFO] Text block names: ['Romana', 'Engleza']
+2026-10-09 23:25:20,537 [CRITICAL] Fatal error: QueryValueEx expected 2 arguments, got 1
+Traceback (most recent call last):
+  File "Main.py", line 416, in <module>
+    output_dir = get_download_path()
+  File "Main.py", line 58, in get_download_path
+    location = winreg.QueryValueEx(downloads_guid)[0]
+               ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+TypeError: QueryValueEx expected 2 arguments, got 1
+2026-10-09 23:26:53,831 [INFO] ============================================================
+2026-10-09 23:26:53,831 [INFO] Application started
+2026-10-09 23:26:53,833 [INFO] Text block names: ['Romana', 'Engleza']
+2026-10-09 23:26:53,833 [CRITICAL] Fatal error: QueryValueEx expected 2 arguments, got 1
+Traceback (most recent call last):
+  File "Main.py", line 416, in <module>
+    output_dir = get_download_path()
+  File "Main.py", line 58, in get_download_path
+    location = winreg.QueryValueEx(downloads_guid)[0]
+               ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+TypeError: QueryValueEx expected 2 arguments, got 1
+2026-10-09 23:27:18,317 [INFO] ============================================================
+2026-10-09 23:27:18,318 [INFO] Application started
+2026-10-09 23:27:18,318 [INFO] Text block names: ['Romana', 'Engleza']
+2026-10-09 23:27:18,319 [INFO] Output directory: C:\Users\Admin\Downloads
+2026-10-09 23:27:18,436 [INFO] Entering main loop

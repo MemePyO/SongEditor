@@ -6,9 +6,32 @@ import tkinter as tk
 from tkinter import filedialog
 from tkinter.font import nametofont
 import os
+import sys
 import json
+import logging
+import traceback
+from datetime import datetime
 from SongEditorPro7Generic import save_song, get_text_block_names
 from autocorrect import autocorrect_text, load_word_list, find_typos, get_spellchecker
+
+# --- Error Logging ---
+LOG_DIR = "logs"
+LOG_FILE = os.path.join(LOG_DIR, "app.log")
+
+def setup_logging():
+    if not os.path.exists(LOG_DIR):
+        os.makedirs(LOG_DIR)
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.FileHandler(LOG_FILE, encoding="utf-8"),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+
+def log_error(msg, exc_info=True):
+    logging.error(msg, exc_info=exc_info)
 
 # --- Romanian Ș / ș / Ț / ț input fix ---
 REMEDIED_CHARS_STD = {ord(c): c for c in 'ȘșȚț'}
@@ -18,6 +41,12 @@ def on_key_press(event):
     if char:
         event.widget.insert('insert', char)
         return "break"
+
+
+def resource_path(relative_path):
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
 
 def get_download_path():
@@ -34,7 +63,7 @@ def get_download_path():
 
 class SongEditorApp(tb.Window):
     def __init__(self, text_block_names, output_dir):
-        super().__init__(themename="darkly")  # Modern dark mode
+        super().__init__(themename="darkly")  # Soft dark mode
         self.title("ProPresenter7 Song Editor — Modern UI")
         self.geometry("1300x850")
 
@@ -49,6 +78,23 @@ class SongEditorApp(tb.Window):
 
     def bind_unicode_fix(self, widget):
         widget.bind("<KeyPress>", on_key_press)
+
+    def toggle_theme(self):
+        current = self.style.theme.name
+        if current == "darkly":
+            self.style.theme_use("litera")
+            self.theme_btn.config(text="Dark Mode")
+            self.message_area.config(bg="#f8f9fa", fg="#333333")
+            for w in list(self.text_widgets.values()) + [self.single_text, self.groupnames_text]:
+                w.config(bg="#ffffff", fg="#333333")
+            self.number_widget.config(bg="#e9ecef", fg="#333333")
+        else:
+            self.style.theme_use("darkly")
+            self.theme_btn.config(text="Light Mode")
+            self.message_area.config(bg="#1e1e1e", fg="#d4d4d4")
+            for w in list(self.text_widgets.values()) + [self.single_text, self.groupnames_text]:
+                w.config(bg="#2d2d2d", fg="#d4d4d4")
+            self.number_widget.config(bg="#1e1e1e", fg="#d4d4d4")
 
     # ---------------------------------------------------------
     # UI BUILD
@@ -71,10 +117,18 @@ class SongEditorApp(tb.Window):
         self.line_count.grid(row=0, column=3, padx=5)
         self.bind_unicode_fix(self.line_count)
 
+        tb.Label(header, text="Arrangement:", bootstyle="light").grid(row=1, column=0, sticky="w", pady=(5,0))
+        self.arrangement_order = tb.Entry(header, width=80, bootstyle="info")
+        self.arrangement_order.insert(0, "Verse 1, Chorus, Verse 2, Chorus, Bridge, Chorus")
+        self.arrangement_order.grid(row=1, column=1, columnspan=6, padx=5, pady=(5,0), sticky="ew")
+        self.bind_unicode_fix(self.arrangement_order)
+
         tb.Button(header, text="Open", bootstyle="primary-outline", command=self.open_file).grid(row=0, column=4, padx=10)
         tb.Button(header, text="Save", bootstyle="success-outline", command=self.save_song_action).grid(row=0, column=5)
         tb.Button(header, text="Autocorrect", bootstyle="warning-outline", command=self.autocorrect_action).grid(row=0, column=6, padx=10)
         tb.Button(header, text="Check Typos", bootstyle="danger-outline", command=self.check_typos_action).grid(row=0, column=7, padx=10)
+        self.theme_btn = tb.Button(header, text="Light Mode", bootstyle="secondary-outline", command=self.toggle_theme)
+        self.theme_btn.grid(row=1, column=7, padx=10, pady=(5,0), sticky="e")
 
         # Notebook
         self.notebook = tb.Notebook(self, bootstyle="primary")
@@ -98,7 +152,7 @@ class SongEditorApp(tb.Window):
         self.update_group_label_preview()
 
         # Status message
-        self.message_area = tk.Text(self, height=2, bg="#2b2b2b", fg="white")
+        self.message_area = tk.Text(self, height=2, bg="#1e1e1e", fg="#d4d4d4")
         self.message_area.grid(row=3, column=0, padx=10, pady=5, sticky="ew")
         self.bind_unicode_fix(self.message_area)
 
@@ -130,7 +184,7 @@ class SongEditorApp(tb.Window):
 
         tb.Label(number_frame, text="#", bootstyle="light").pack()
         self.number_widget = tk.Text(number_frame, wrap=tk.NONE, width=4,
-                                     bg="#3a3a3a", fg="white", yscrollcommand=self.scrollbar.set)
+                                     bg="#1e1e1e", fg="#d4d4d4", yscrollcommand=self.scrollbar.set)
         self.number_widget.pack(expand=True, fill=tk.BOTH)
         self.number_widget.bind("<Motion>", self.on_hover)
 
@@ -141,7 +195,7 @@ class SongEditorApp(tb.Window):
 
             tb.Label(frame, text=name, bootstyle="light").pack()
 
-            text_widget = tk.Text(frame, wrap=tk.WORD, bg="#1e1e1e", fg="white",
+            text_widget = tk.Text(frame, wrap=tk.WORD, bg="#2d2d2d", fg="#d4d4d4",
                                   yscrollcommand=self.scrollbar.set)
             text_widget.pack(expand=True, fill=tk.BOTH)
 
@@ -177,7 +231,7 @@ class SongEditorApp(tb.Window):
         self.single_tab.grid_rowconfigure(0, weight=1)
         self.single_tab.grid_columnconfigure(0, weight=1)
 
-        self.single_text = tk.Text(self.single_tab, wrap=tk.WORD, bg="#1e1e1e", fg="white")
+        self.single_text = tk.Text(self.single_tab, wrap=tk.WORD, bg="#2d2d2d", fg="#d4d4d4")
         self.single_text.grid(row=0, column=0, sticky="nsew")
         self.bind_unicode_fix(self.single_text)
 
@@ -190,7 +244,7 @@ class SongEditorApp(tb.Window):
 
         tb.Label(self.groupnames_tab, text="Edit GroupNames.txt:", bootstyle="light").grid(row=0, column=0, sticky="w", padx=5, pady=5)
 
-        self.groupnames_text = tk.Text(self.groupnames_tab, wrap=tk.WORD, bg="#1e1e1e", fg="white")
+        self.groupnames_text = tk.Text(self.groupnames_tab, wrap=tk.WORD, bg="#2d2d2d", fg="#d4d4d4")
         self.groupnames_text.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
         self.bind_unicode_fix(self.groupnames_text)
 
@@ -200,26 +254,32 @@ class SongEditorApp(tb.Window):
 
     def load_groupnames(self):
         try:
-            with open("GroupNames.txt", "r") as f:
+            path = resource_path("GroupNames.txt")
+            with open(path, "r", encoding="utf-8") as f:
                 self.groupnames_text.delete("1.0", tk.END)
                 self.groupnames_text.insert("1.0", f.read())
-        except:
+        except Exception as e:
+            self.groupnames_text.delete("1.0", tk.END)
             self.groupnames_text.insert("1.0", "Could not load GroupNames.txt")
+            log_error("Failed to load GroupNames.txt", exc_info=False)
 
     def save_groupnames(self):
         content = self.groupnames_text.get("1.0", tk.END).strip()
         try:
-            with open("GroupNames.txt", "w") as f:
+            path = resource_path("GroupNames.txt")
+            with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
             self.show_message("GroupNames.txt saved.")
             self.update_group_label_preview(content)
         except Exception as e:
             self.show_message("Error saving GroupNames.txt: " + str(e))
+            log_error("Failed to save GroupNames.txt")
 
     def update_group_label_preview(self, content=None):
         if content is None:
             try:
-                with open("GroupNames.txt", "r") as f:
+                path = resource_path("GroupNames.txt")
+                with open(path, "r", encoding="utf-8") as f:
                     content = f.read()
             except:
                 content = ""
@@ -254,6 +314,7 @@ class SongEditorApp(tb.Window):
             self.show_message(f"Opened: {path}")
         except Exception as e:
             self.show_message("Error opening file: " + str(e))
+            log_error("Failed to open file")
 
     # ---------------------------------------------------------
     # SAVE SONG
@@ -284,45 +345,54 @@ class SongEditorApp(tb.Window):
         output_file = os.path.join(self.output_dir, title)
 
         try:
-            save_song(self.text_block_names, song_texts, max_lines, output_file)
+            save_song(self.text_block_names, song_texts, max_lines, output_file, arrangement_order=self.arrangement_order.get().strip())
             self.show_message(f"Saved! Import in ProPresenter: File → Import → {output_file}.pro")
         except Exception as e:
             self.show_message("Save failed: " + str(e))
+            log_error("Failed to save song")
 
     # ---------------------------------------------------------
     # AUTOCORRECT
     # ---------------------------------------------------------
     def autocorrect_action(self):
-        word_list = load_word_list()
-        for name in self.text_block_names:
-            w = self.text_widgets[name]
-            text = w.get("1.0", tk.END)
-            w.delete("1.0", tk.END)
-            w.insert("1.0", autocorrect_text(text, word_list))
+        try:
+            word_list = load_word_list()
+            for name in self.text_block_names:
+                w = self.text_widgets[name]
+                text = w.get("1.0", tk.END)
+                w.delete("1.0", tk.END)
+                w.insert("1.0", autocorrect_text(text, word_list))
 
-        first = self.text_block_names[0]
-        self.single_text.delete("1.0", tk.END)
-        self.single_text.insert("1.0", self.text_widgets[first].get("1.0", tk.END))
+            first = self.text_block_names[0]
+            self.single_text.delete("1.0", tk.END)
+            self.single_text.insert("1.0", self.text_widgets[first].get("1.0", tk.END))
 
-        self.show_message("Autocorrect applied to all text boxes.")
+            self.show_message("Autocorrect applied to all text boxes.")
+        except Exception as e:
+            self.show_message("Autocorrect failed: " + str(e))
+            log_error("Autocorrect failed")
 
     # ---------------------------------------------------------
     # CHECK TYPOS (highlight only)
     # ---------------------------------------------------------
     def check_typos_action(self):
-        spell = get_spellchecker()
-        total = 0
-        for name in self.text_block_names:
-            w = self.text_widgets[name]
-            w.tag_remove("typo", "1.0", tk.END)
-            text = w.get("1.0", tk.END)
-            for start, end, word in find_typos(text, spell):
-                start_idx = f"1.0+{start}c"
-                end_idx = f"1.0+{end}c"
-                w.tag_add("typo", start_idx, end_idx)
-                total += 1
-            w.tag_config("typo", background="#5c1a1a", foreground="#ff6b6b")
-        self.show_message(f"Found {total} possible typo(s). Highlighted in red.")
+        try:
+            spell = get_spellchecker()
+            total = 0
+            for name in self.text_block_names:
+                w = self.text_widgets[name]
+                w.tag_remove("typo", "1.0", tk.END)
+                text = w.get("1.0", tk.END)
+                for start, end, word in find_typos(text, spell):
+                    start_idx = f"1.0+{start}c"
+                    end_idx = f"1.0+{end}c"
+                    w.tag_add("typo", start_idx, end_idx)
+                    total += 1
+                w.tag_config("typo", background="#5c1a1a", foreground="#ff6b6b")
+            self.show_message(f"Found {total} possible typo(s). Highlighted in red.")
+        except Exception as e:
+            self.show_message("Check typos failed: " + str(e))
+            log_error("Check typos failed")
 
     # ---------------------------------------------------------
     # STATUS MESSAGE
@@ -336,11 +406,22 @@ class SongEditorApp(tb.Window):
 # MAIN
 # ---------------------------------------------------------
 if __name__ == "__main__":
-    text_block_names = get_text_block_names()
-    output_dir = get_download_path()
-    app = SongEditorApp(text_block_names, output_dir)
+    setup_logging()
+    logging.info("=" * 60)
+    logging.info("Application started")
 
-    default_font = nametofont("TkDefaultFont")
-    default_font.configure(family="Segoe UI", size=11)
+    try:
+        text_block_names = get_text_block_names()
+        logging.info(f"Text block names: {text_block_names}")
+        output_dir = get_download_path()
+        logging.info(f"Output directory: {output_dir}")
+        app = SongEditorApp(text_block_names, output_dir)
 
-    app.mainloop()
+        default_font = nametofont("TkDefaultFont")
+        default_font.configure(family="Segoe UI", size=11)
+
+        logging.info("Entering main loop")
+        app.mainloop()
+    except Exception as e:
+        logging.critical(f"Fatal error: {e}", exc_info=True)
+        raise
