@@ -12,31 +12,14 @@ st.caption("Enter lyrics below, then download the .json file for the desktop app
 if "text_blocks" not in st.session_state:
     st.session_state.text_blocks = {name: "" for name in TEXT_BLOCK_NAMES}
 
-
-def numbered_text(text):
-    lines = text.split("\n")
-    numbered = "\n".join(f"{i+1:>3}| {line}" for i, line in enumerate(lines))
-    return numbered
-
-
-for name in TEXT_BLOCK_NAMES:
-    st.session_state.text_blocks[name] = st.session_state.text_blocks[name]
-
-for name in TEXT_BLOCK_NAMES:
-    text = st.session_state.text_blocks[name]
-    line_count = len(text.split("\n")) if text else 1
-    num_lines = "\n".join(f"{i+1:>3}|" for i in range(line_count))
-
-    col_nums, col_text = st.columns([1, 20])
-    with col_nums:
-        st.markdown(f"```\n{num_lines}\n```")
-    with col_text:
+cols = st.columns(len(TEXT_BLOCK_NAMES))
+for i, name in enumerate(TEXT_BLOCK_NAMES):
+    with cols[i]:
         st.session_state.text_blocks[name] = st.text_area(
             name,
-            value=text,
+            value=st.session_state.text_blocks[name],
             height=500,
             key=f"ta_{name}",
-            label_visibility="collapsed",
         )
 
 st.divider()
