@@ -61,9 +61,28 @@ def get_download_path():
         return os.path.join(os.path.expanduser('~'), 'Downloads')
 
 
+def load_config():
+    try:
+        with open("config.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_config(config):
+    try:
+        with open("config.json", "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+    except Exception:
+        pass
+
+
 class SongEditorApp(tb.Window):
     def __init__(self, text_block_names, output_dir):
-        super().__init__(themename="darkly")  # Soft dark mode
+        self.config = load_config()
+        self.current_font_size = self.config.get("font_size", 11)
+        default_theme = self.config.get("theme", "darkly")
+        super().__init__(themename=default_theme)
         self.title("ProPresenter7 Song Editor — Modern UI")
         self.geometry("1300x850")
 
@@ -79,6 +98,18 @@ class SongEditorApp(tb.Window):
     def bind_unicode_fix(self, widget):
         widget.bind("<KeyPress>", on_key_press)
 
+    def on_font_slider_change(self, value):
+        self.apply_font_size(int(float(value)))
+
+    def apply_font_size(self, size):
+        self.current_font_size = size
+        font = ("Segoe UI", size)
+        for w in list(self.text_widgets.values()) + [self.single_text, self.groupnames_text, self.message_area]:
+            w.config(font=font)
+        self.number_widget.config(font=("Segoe UI", size))
+        self.config["font_size"] = size
+        save_config(self.config)
+
     def toggle_theme(self):
         current = self.style.theme.name
         if current == "darkly":
@@ -88,6 +119,7 @@ class SongEditorApp(tb.Window):
             for w in list(self.text_widgets.values()) + [self.single_text, self.groupnames_text]:
                 w.config(bg="#ffffff", fg="#333333")
             self.number_widget.config(bg="#e9ecef", fg="#333333")
+            self.config["theme"] = "litera"
         else:
             self.style.theme_use("darkly")
             self.theme_btn.config(text="Light Mode")
@@ -95,6 +127,8 @@ class SongEditorApp(tb.Window):
             for w in list(self.text_widgets.values()) + [self.single_text, self.groupnames_text]:
                 w.config(bg="#2d2d2d", fg="#d4d4d4")
             self.number_widget.config(bg="#1e1e1e", fg="#d4d4d4")
+            self.config["theme"] = "darkly"
+        save_config(self.config)
 
     # ---------------------------------------------------------
     # UI BUILD
@@ -120,8 +154,12 @@ class SongEditorApp(tb.Window):
         tb.Label(header, text="Arrangement:", bootstyle="light").grid(row=1, column=0, sticky="w", pady=(5,0))
         self.arrangement_order = tb.Entry(header, width=80, bootstyle="info")
         self.arrangement_order.insert(0, "Verse 1, Chorus, Verse 2, Chorus, Bridge, Chorus")
-        self.arrangement_order.grid(row=1, column=1, columnspan=6, padx=5, pady=(5,0), sticky="ew")
+        self.arrangement_order.grid(row=1, column=1, columnspan=5, padx=5, pady=(5,0), sticky="ew")
         self.bind_unicode_fix(self.arrangement_order)
+
+        tb.Label(header, text="Font Size:", bootstyle="light").grid(row=2, column=0, sticky="w", pady=(5,0))
+        self.font_slider = tb.Scale(header, from_=10, to=24, value=self.current_font_size, command=self.on_font_slider_change, bootstyle="info")
+        self.font_slider.grid(row=2, column=1, columnspan=6, padx=5, pady=(5,0), sticky="ew")
 
         tb.Button(header, text="Open", bootstyle="primary-outline", command=self.open_file).grid(row=0, column=4, padx=10)
         tb.Button(header, text="Save", bootstyle="success-outline", command=self.save_song_action).grid(row=0, column=5)
@@ -319,6 +357,40 @@ class SongEditorApp(tb.Window):
     # ---------------------------------------------------------
     # SAVE SONG
     # ---------------------------------------------------------
+    def get_known_labels(self):
+        try:
+            path = resource_path("GroupNames.txt")
+            with open(path, "r", encoding="utf-8") as f:
+                raw_labels = f.read().splitlines()
+            labels = []
+            for lbl in raw_labels:
+                if ".." in lbl:
+                    name, rng = lbl.split(" ")
+                    start, end = map(int, rng.split(".."))
+                    for i in range(start, end + 1):
+                        labels.append(f"{name} {i}")
+                else:
+                    if lbl.strip():
+                        labels.append(lbl.strip())
+            return labels
+        except Exception:
+            return []
+
+    def validate_group_labels(self, song_texts):
+        known = set(self.get_known_labels())
+        unknown = set()
+        first_block = self.text_block_names[0]
+        for line in song_texts[first_block]:
+            stripped = line.strip()
+            if not stripped or stripped in known:
+                continue
+            if len(stripped) > 10:
+                continue
+            if stripped.endswith((".", ",", "!", "?", ";", ":")):
+                continue
+            unknown.add(stripped)
+        return sorted(unknown)
+
     def save_song_action(self):
         title = self.song_title.get().strip()
         if not title:
@@ -330,6 +402,12 @@ class SongEditorApp(tb.Window):
 
         song_texts = {name: self.text_widgets[name].get("1.0", tk.END).splitlines()
                       for name in self.text_block_names}
+
+        unknown = self.validate_group_labels(song_texts)
+        if unknown:
+            msg = "Unknown group labels found:\n\n" + "\n".join(unknown) + "\n\nSave anyway?"
+            if not tb.dialogs.Messagebox.yesno(msg, "Unknown Labels"):
+                return
 
         try:
             max_lines = int(self.line_count.get())

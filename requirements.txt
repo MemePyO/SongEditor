@@ -1,0 +1,7 @@
+ttkbootstrap
+pyspellchecker
+protobuf
+pyinstaller
+pytest
+streamlit
+flask
