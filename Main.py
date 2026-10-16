@@ -14,7 +14,7 @@ import re
 from SongEditorPro7Generic import save_song, get_text_block_names
 from autocorrect import find_typos, get_spellchecker
 from tkinterdnd2 import DND_FILES, TkinterDnD
-import fitz
+import pymupdf as fitz
 
 # --- Error Logging ---
 LOG_DIR = "logs"
@@ -81,9 +81,9 @@ def save_config(config):
 
 class SongEditorApp(TkinterDnD.Tk):
     def __init__(self, text_block_names, output_dir):
-        self.config = load_config()
-        self.current_font_size = self.config.get("font_size", 11)
-        default_theme = self.config.get("theme", "darkly")
+        self.app_config = load_config()
+        self.current_font_size = self.app_config.get("font_size", 11)
+        default_theme = self.app_config.get("theme", "darkly")
         super().__init__()
         self.style = tb.Style(theme=default_theme)
         self.title("ProPresenter7 Song Editor — Modern UI")
@@ -207,8 +207,8 @@ class SongEditorApp(TkinterDnD.Tk):
         for w in list(self.text_widgets.values()) + [self.single_text, self.groupnames_text, self.message_area]:
             w.config(font=font)
         self.number_widget.config(font=("Segoe UI", size))
-        self.config["font_size"] = size
-        save_config(self.config)
+        self.app_config["font_size"] = size
+        save_config(self.app_config)
 
     def toggle_theme(self):
         current = self.style.theme.name
@@ -219,7 +219,7 @@ class SongEditorApp(TkinterDnD.Tk):
             for w in list(self.text_widgets.values()) + [self.single_text, self.groupnames_text]:
                 w.config(bg="#ffffff", fg="#333333")
             self.number_widget.config(bg="#e9ecef", fg="#333333")
-            self.config["theme"] = "litera"
+            self.app_config["theme"] = "litera"
         else:
             self.style.theme_use("darkly")
             self.theme_btn.config(text="Light Mode")
@@ -227,8 +227,8 @@ class SongEditorApp(TkinterDnD.Tk):
             for w in list(self.text_widgets.values()) + [self.single_text, self.groupnames_text]:
                 w.config(bg="#2d2d2d", fg="#d4d4d4")
             self.number_widget.config(bg="#1e1e1e", fg="#d4d4d4")
-            self.config["theme"] = "darkly"
-        save_config(self.config)
+            self.app_config["theme"] = "darkly"
+        save_config(self.app_config)
 
     # ---------------------------------------------------------
     # UI BUILD
@@ -433,7 +433,7 @@ class SongEditorApp(TkinterDnD.Tk):
                 path = resource_path("GroupNames.txt")
                 with open(path, "r", encoding="utf-8") as f:
                     content = f.read()
-            except:
+            except Exception:
                 content = ""
         preview = "Group Names Preview:\n" + "  ".join(content.splitlines())
         self.label_hint.config(text=preview)
@@ -589,7 +589,7 @@ if __name__ == "__main__":
         app = SongEditorApp(text_block_names, output_dir)
 
         default_font = nametofont("TkDefaultFont")
-        default_font.configure(family="Segoe UI", size=11)
+        default_font.configure(family="Segoe UI", size=app.current_font_size)
 
         logging.info("Entering main loop")
         app.mainloop()

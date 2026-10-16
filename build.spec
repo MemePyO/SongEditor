@@ -1,5 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_data_files
+
 block_cipher = None
 
 a = Analysis(
@@ -11,11 +13,14 @@ a = Analysis(
         ('GroupNames.txt', '.'),
         ('autocorrect_words.txt', '.'),
         ('dictionaries', 'dictionaries'),
-    ],
+    ] + collect_data_files('tkinterdnd2'),
     hiddenimports=[
         'ttkbootstrap',
         'spellchecker',
         'pyspellchecker',
+        'tkinterdnd2',
+        'fitz',
+        'pymupdf',
     ],
     hookspath=[],
     hooksconfig={},

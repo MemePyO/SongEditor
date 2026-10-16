@@ -1,5 +1,5 @@
 from flask import Flask, request, make_response
-from SongEditorPro7Generic import get_text_block_names, gen_pro_data
+from SongEditorPro7Generic import get_text_block_names, gen_pro_data, resource_path
 from autocorrect import find_typos, get_spellchecker
 import json
 
@@ -90,7 +90,7 @@ def song_input():
     return build_page(loaded_dict={})
 
 
-def build_page(loaded_dict, corrected=None, typos=None):
+def build_page(loaded_dict, typos=None):
     # https://www.youtube.com/watch?v=mqhxxeeTbu0&list=PLzMcBGfZo4-n4vJJybUVV3Un_NFS5EOgX&index=1
     if request.method == "POST":
         if "action" in request.files:
@@ -114,16 +114,14 @@ def build_page(loaded_dict, corrected=None, typos=None):
         title += f"<th>{name}</th>"
 
     for name in text_block_names:
-        if corrected and name in corrected:
-            song_text = corrected[name]
-        elif name in loaded_dict:
+        if name in loaded_dict:
             song_text = "\n".join(loaded_dict[name]).rstrip("\n")
         else:
             song_text = ""
         song_text = song_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         content += f"""<td><textarea  style="white-space:pre;" id ="{name}" name="{name}" rows="50" cols="50" class="linked" >{song_text}</textarea></td>\n"""
 
-    with open("GroupNames.txt", "r") as group_names:
+    with open(resource_path("GroupNames.txt"), "r", encoding="utf-8") as group_names:
         labels = group_names.read().split("\n")
     label_string = ""
     num_labels_per_line = 13
