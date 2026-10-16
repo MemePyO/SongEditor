@@ -5,3 +5,5 @@ pyinstaller
 pytest
 streamlit
 flask
+pymupdf
+tkinterdnd2

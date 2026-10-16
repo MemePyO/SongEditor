@@ -9,10 +9,12 @@ import os
 import sys
 import json
 import logging
-import traceback
-from datetime import datetime
+import threading
+import re
 from SongEditorPro7Generic import save_song, get_text_block_names
-from autocorrect import autocorrect_text, load_word_list, find_typos, get_spellchecker
+from autocorrect import find_typos, get_spellchecker
+from tkinterdnd2 import DND_FILES, TkinterDnD
+import fitz
 
 # --- Error Logging ---
 LOG_DIR = "logs"
@@ -77,12 +79,13 @@ def save_config(config):
         pass
 
 
-class SongEditorApp(tb.Window):
+class SongEditorApp(TkinterDnD.Tk):
     def __init__(self, text_block_names, output_dir):
         self.config = load_config()
         self.current_font_size = self.config.get("font_size", 11)
         default_theme = self.config.get("theme", "darkly")
-        super().__init__(themename=default_theme)
+        super().__init__()
+        self.style = tb.Style(theme=default_theme)
         self.title("ProPresenter7 Song Editor — Modern UI")
         self.geometry("1300x850")
 
@@ -93,13 +96,110 @@ class SongEditorApp(tb.Window):
         self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
+        self.drop_target_register(DND_FILES)
+        self.dnd_bind('<<Drop>>', self.handle_pdf_drop)
+
         self.init_ui()
+
+    def handle_pdf_drop(self, event, target_name=None):
+        path = event.data.strip("{}")
+        if not path.lower().endswith(".pdf"):
+            return
+        self.show_message(f"Extracting: {os.path.basename(path)}...")
+        threading.Thread(target=self._extract_pdf, args=(path, target_name), daemon=True).start()
+
+    def _extract_pdf(self, path, target_name=None):
+        try:
+            doc = fitz.open(path)
+            raw = ""
+            for page in doc:
+                raw += page.get_text("text")
+            doc.close()
+
+            lines = raw.splitlines()
+            known = self.get_known_labels()
+            start = 0
+            for i, line in enumerate(lines):
+                s = line.strip().rstrip(":").rstrip(".").strip()
+                if s in known:
+                    start = i
+                    break
+
+            all_lines = []
+            for line in lines[start:]:
+                s = line.strip()
+                if s:
+                    all_lines.append(s)
+
+            if target_name:
+                text = "\n".join(all_lines)
+                self.after(0, self._populate_pdf, text, "", path, target_name)
+            else:
+                ro_lines = []
+                en_lines = []
+                current_lang = None
+                ro_diacritics = set("ăâîșțĂÂÎȘȚ")
+
+                for s in all_lines:
+                    base = re.sub(r"\*\d+$", "", s).rstrip(":").rstrip(".").strip()
+                    if base in known:
+                        ro_section = any(c in ro_diacritics for c in base)
+                        en_section = any(c.isalpha() and c not in ro_diacritics for c in base)
+                        if ro_section and not en_section:
+                            current_lang = "ro"
+                        elif en_section and not ro_section:
+                            current_lang = "en"
+                        if current_lang == "ro":
+                            ro_lines.append(s)
+                        elif current_lang == "en":
+                            en_lines.append(s)
+                        continue
+
+                    if current_lang == "ro":
+                        ro_lines.append(s)
+                    elif current_lang == "en":
+                        en_lines.append(s)
+
+                ro_text = "\n".join(ro_lines)
+                en_text = "\n".join(en_lines)
+                self.after(0, self._populate_pdf, ro_text, en_text, path, target_name)
+        except Exception as e:
+            self.after(0, self.show_message, f"PDF extraction failed: {e}")
+            log_error("PDF extraction failed")
+
+    def _populate_pdf(self, ro_text, en_text, path, target_name=None):
+        first = self.text_block_names[0]
+        second = self.text_block_names[1] if len(self.text_block_names) > 1 else None
+        if target_name and target_name in self.text_widgets:
+            self.text_widgets[target_name].delete("1.0", tk.END)
+            self.text_widgets[target_name].insert("1.0", ro_text)
+        else:
+            self.text_widgets[first].delete("1.0", tk.END)
+            self.text_widgets[first].insert("1.0", ro_text)
+            if second and second in self.text_widgets:
+                self.text_widgets[second].delete("1.0", tk.END)
+                self.text_widgets[second].insert("1.0", en_text)
+        self.single_text.delete("1.0", tk.END)
+        self.single_text.insert("1.0", ro_text)
+        self.song_title.delete(0, tk.END)
+        self.song_title.insert(0, os.path.basename(path).replace(".pdf", ""))
+        line_count = len(ro_text.splitlines())
+        self.number_widget.delete("1.0", tk.END)
+        self.number_widget.insert("1.0", "\n".join(str(i+1) for i in range(line_count)))
+        self.show_message(f"Loaded: {os.path.basename(path)}")
 
     def bind_unicode_fix(self, widget):
         widget.bind("<KeyPress>", on_key_press)
 
     def on_font_slider_change(self, value):
         self.apply_font_size(int(float(value)))
+
+    def update_number_widget(self, event=None):
+        first = self.text_block_names[0]
+        text = self.text_widgets[first].get("1.0", tk.END)
+        line_count = len(text.splitlines())
+        self.number_widget.delete("1.0", tk.END)
+        self.number_widget.insert("1.0", "\n".join(str(i+1) for i in range(line_count)))
 
     def apply_font_size(self, size):
         self.current_font_size = size
@@ -163,8 +263,7 @@ class SongEditorApp(tb.Window):
 
         tb.Button(header, text="Open", bootstyle="primary-outline", command=self.open_file).grid(row=0, column=4, padx=10)
         tb.Button(header, text="Save", bootstyle="success-outline", command=self.save_song_action).grid(row=0, column=5)
-        tb.Button(header, text="Autocorrect", bootstyle="warning-outline", command=self.autocorrect_action).grid(row=0, column=6, padx=10)
-        tb.Button(header, text="Check Typos", bootstyle="danger-outline", command=self.check_typos_action).grid(row=0, column=7, padx=10)
+        tb.Button(header, text="Check Typos", bootstyle="danger-outline", command=self.check_typos_action).grid(row=0, column=6, padx=10)
         self.theme_btn = tb.Button(header, text="Light Mode", bootstyle="secondary-outline", command=self.toggle_theme)
         self.theme_btn.grid(row=1, column=7, padx=10, pady=(5,0), sticky="e")
 
@@ -240,6 +339,19 @@ class SongEditorApp(tb.Window):
             self.bind_unicode_fix(text_widget)
             self.text_widgets[name] = text_widget
             text_widget.bind("<Motion>", self.on_hover)
+            text_widget.bind("<KeyRelease>", self.update_number_widget)
+
+        def on_text_scroll(event):
+            self.number_widget.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            for widget in self.text_widgets.values():
+                widget.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            return "break"
+
+        self.number_widget.bind("<MouseWheel>", on_text_scroll)
+        for wname, widget in self.text_widgets.items():
+            widget.bind("<MouseWheel>", on_text_scroll)
+            widget.drop_target_register(DND_FILES)
+            widget.dnd_bind('<<Drop>>', lambda e, n=wname: self.handle_pdf_drop(e, n))
 
     # ---------------------------------------------------------
     # HOVER HIGHLIGHT
@@ -262,6 +374,12 @@ class SongEditorApp(tb.Window):
         self.number_widget.tag_add("hover", f"{line}.0", f"{line}.end")
         self.number_widget.tag_config("hover", background="#004d40")
 
+    def _sync_all_scroll(self, event):
+        self.number_widget.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        for widget in self.text_widgets.values():
+            widget.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        return "break"
+
     # ---------------------------------------------------------
     # SINGLE VIEW
     # ---------------------------------------------------------
@@ -272,6 +390,7 @@ class SongEditorApp(tb.Window):
         self.single_text = tk.Text(self.single_tab, wrap=tk.WORD, bg="#2d2d2d", fg="#d4d4d4")
         self.single_text.grid(row=0, column=0, sticky="nsew")
         self.bind_unicode_fix(self.single_text)
+        self.single_text.bind("<MouseWheel>", self._sync_all_scroll)
 
     # ---------------------------------------------------------
     # GROUP NAMES TAB
@@ -285,6 +404,7 @@ class SongEditorApp(tb.Window):
         self.groupnames_text = tk.Text(self.groupnames_tab, wrap=tk.WORD, bg="#2d2d2d", fg="#d4d4d4")
         self.groupnames_text.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
         self.bind_unicode_fix(self.groupnames_text)
+        self.groupnames_text.bind("<MouseWheel>", self._sync_all_scroll)
 
         tb.Button(self.groupnames_tab, text="Save Changes", bootstyle="success-outline", command=self.save_groupnames).grid(row=2, column=0, pady=10)
 
@@ -428,27 +548,6 @@ class SongEditorApp(tb.Window):
         except Exception as e:
             self.show_message("Save failed: " + str(e))
             log_error("Failed to save song")
-
-    # ---------------------------------------------------------
-    # AUTOCORRECT
-    # ---------------------------------------------------------
-    def autocorrect_action(self):
-        try:
-            word_list = load_word_list()
-            for name in self.text_block_names:
-                w = self.text_widgets[name]
-                text = w.get("1.0", tk.END)
-                w.delete("1.0", tk.END)
-                w.insert("1.0", autocorrect_text(text, word_list))
-
-            first = self.text_block_names[0]
-            self.single_text.delete("1.0", tk.END)
-            self.single_text.insert("1.0", self.text_widgets[first].get("1.0", tk.END))
-
-            self.show_message("Autocorrect applied to all text boxes.")
-        except Exception as e:
-            self.show_message("Autocorrect failed: " + str(e))
-            log_error("Autocorrect failed")
 
     # ---------------------------------------------------------
     # CHECK TYPOS (highlight only)
