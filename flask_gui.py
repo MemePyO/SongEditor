@@ -1,8 +1,7 @@
 from flask import Flask, request, make_response
 from SongEditorPro7Generic import get_text_block_names, gen_pro_data
-from autocorrect import autocorrect_text, load_word_list, find_typos, get_spellchecker
+from autocorrect import find_typos, get_spellchecker
 import json
-import re
 
 app = Flask(__name__)
 
@@ -68,17 +67,6 @@ def song_download(request):
     return response
 
 
-def autocorrect_action(request):
-    form_data = request.form
-    text_block_names = get_text_block_names()
-    corrected = {}
-    word_list = load_word_list()
-    for name in text_block_names:
-        text = form_data.get(name, "")
-        corrected[name] = autocorrect_text(text, word_list)
-    return corrected
-
-
 def check_typos_action(request):
     form_data = request.form
     text_block_names = get_text_block_names()
@@ -89,12 +77,6 @@ def check_typos_action(request):
         typos = find_typos(text, spell)
         result[name] = typos
     return result
-
-
-@app.route("/autocorrect", methods=["POST"])
-def autocorrect_route():
-    corrected = autocorrect_action(request)
-    return build_page(loaded_dict={}, corrected=corrected)
 
 
 @app.route("/check_typos", methods=["POST"])
@@ -230,7 +212,6 @@ def build_page(loaded_dict, corrected=None, typos=None):
             <br/><br/>
             <button type="submit" name="action" value=pro>Download .pro</button>
             <button type="submit" name="action" value=json>Download .json</button>
-            <button type="submit" formaction="/autocorrect">Autocorrect</button>
             <button type="submit" formaction="/check_typos">Check Typos</button>
             <br/><br/>
             <label  name="json_file">Reload .json file:</label>

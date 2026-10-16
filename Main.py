@@ -341,15 +341,9 @@ class SongEditorApp(TkinterDnD.Tk):
             text_widget.bind("<Motion>", self.on_hover)
             text_widget.bind("<KeyRelease>", self.update_number_widget)
 
-        def on_text_scroll(event):
-            self.number_widget.yview_scroll(int(-1 * (event.delta / 120)), "units")
-            for widget in self.text_widgets.values():
-                widget.yview_scroll(int(-1 * (event.delta / 120)), "units")
-            return "break"
-
-        self.number_widget.bind("<MouseWheel>", on_text_scroll)
+        self.number_widget.bind("<MouseWheel>", self._sync_all_scroll)
         for wname, widget in self.text_widgets.items():
-            widget.bind("<MouseWheel>", on_text_scroll)
+            widget.bind("<MouseWheel>", self._sync_all_scroll)
             widget.drop_target_register(DND_FILES)
             widget.dnd_bind('<<Drop>>', lambda e, n=wname: self.handle_pdf_drop(e, n))
 

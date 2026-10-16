@@ -1,6 +1,6 @@
 import pytest
 from SongEditorPro7Generic import escape_cocoa_rtf, rtf_text_start, inject_text_into_rtf, split_slides
-from autocorrect import autocorrect_text, find_typos, fix_diacritics, fix_spacing, capitalize_lines, apply_word_list
+from autocorrect import find_typos
 
 
 class TestEscapeCocoaRtf:
@@ -85,26 +85,6 @@ class TestSplitSlides:
         slides = split_slides(names, texts, 2)
         assert len(slides) == 2
 
-
-class TestAutocorrect:
-    def test_diacritics(self):
-        assert fix_diacritics("şi ţara") == "și țara"
-
-    def test_spacing(self):
-        assert fix_spacing("word , word") == "word, word"
-        assert fix_spacing("word  word") == "word word"
-
-    def test_capitalize(self):
-        assert capitalize_lines("hello world") == "Hello world"
-
-    def test_word_list(self):
-        replacements = {"btw": "by the way"}
-        assert apply_word_list("btw this", replacements) == "by the way this"
-
-    def test_full_autocorrect(self):
-        result = autocorrect_text("şi ţara ,  e frumos")
-        assert "Și" in result
-        assert "țara" in result
 
 
 class TestFindTypos:
