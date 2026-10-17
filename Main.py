@@ -20,6 +20,14 @@ import pymupdf as fitz
 LABEL_FONT_FAMILY = "Segoe UI Semibold"
 LABEL_FONT_SIZE = 10
 
+# --- Theme colors ---
+DARK_BG = "#0f1b2d"        # dark blue tint (app background)
+DARK_SURFACE = "#16273d"   # text areas
+DARK_FG = "#dbe6f5"        # primary text
+LIGHT_BG = "#e3f1dd"       # light greenish background
+LIGHT_SURFACE = "#f5fbf2"  # text areas
+LIGHT_FG = "#0a2410"       # dark green, high contrast text
+
 # --- Error Logging ---
 LOG_DIR = "logs"
 LOG_FILE = os.path.join(LOG_DIR, "app.log")
@@ -222,24 +230,39 @@ class SongEditorApp(TkinterDnD.Tk):
         self.app_config["font_size"] = size
         save_config(self.app_config)
 
+    def apply_theme_colors(self, light):
+        if light:
+            bg, fg, surface = LIGHT_BG, LIGHT_FG, LIGHT_SURFACE
+        else:
+            bg, fg, surface = DARK_BG, DARK_FG, DARK_SURFACE
+
+        self.configure(bg=bg)
+        for style_name in ("TFrame", "TLabel", "TLabelframe", "TLabelframe.Label", "TNotebook"):
+            try:
+                self.style.configure(style_name, background=bg, foreground=fg)
+            except Exception:
+                pass
+        try:
+            self.style.configure("TNotebook.Tab", foreground=fg)
+        except Exception:
+            pass
+
+        for w in list(self.text_widgets.values()) + [self.single_text, self.groupnames_text]:
+            w.config(bg=surface, fg=fg)
+        self.number_widget.config(bg=bg, fg=fg)
+        self.message_area.config(bg=bg, fg=fg)
+
     def toggle_theme(self):
-        current = self.style.theme.name
-        if current == "darkly":
+        if self.style.theme.name == "darkly":
             self.style.theme_use("litera")
             self.theme_btn.config(text="Dark Mode")
-            self.message_area.config(bg="#f8f9fa", fg="#333333")
-            for w in list(self.text_widgets.values()) + [self.single_text, self.groupnames_text]:
-                w.config(bg="#ffffff", fg="#333333")
-            self.number_widget.config(bg="#e9ecef", fg="#333333")
             self.app_config["theme"] = "litera"
+            self.apply_theme_colors(light=True)
         else:
             self.style.theme_use("darkly")
             self.theme_btn.config(text="Light Mode")
-            self.message_area.config(bg="#1e1e1e", fg="#d4d4d4")
-            for w in list(self.text_widgets.values()) + [self.single_text, self.groupnames_text]:
-                w.config(bg="#2d2d2d", fg="#d4d4d4")
-            self.number_widget.config(bg="#1e1e1e", fg="#d4d4d4")
             self.app_config["theme"] = "darkly"
+            self.apply_theme_colors(light=False)
         save_config(self.app_config)
 
     # ---------------------------------------------------------
@@ -301,9 +324,11 @@ class SongEditorApp(TkinterDnD.Tk):
         self.update_group_label_preview()
 
         # Status message
-        self.message_area = tk.Text(self, height=2, bg="#1e1e1e", fg="#d4d4d4")
+        self.message_area = tk.Text(self, height=2, bg=DARK_BG, fg=DARK_FG)
         self.message_area.grid(row=3, column=0, padx=10, pady=5, sticky="ew")
         self.bind_unicode_fix(self.message_area)
+
+        self.apply_theme_colors(light=(self.style.theme.name == "litera"))
 
     # ---------------------------------------------------------
     # TRANSLATE VIEW — Modern UI + Highlight + Zebra
@@ -333,7 +358,7 @@ class SongEditorApp(TkinterDnD.Tk):
 
         self.make_label(number_frame, "#").pack()
         self.number_widget = tk.Text(number_frame, wrap=tk.NONE, width=4,
-                                     bg="#1e1e1e", fg="#d4d4d4", yscrollcommand=self.scrollbar.set)
+                                     bg=DARK_BG, fg=DARK_FG, yscrollcommand=self.scrollbar.set)
         self.number_widget.pack(expand=True, fill=tk.BOTH)
         self.number_widget.bind("<Motion>", self.on_hover)
 
@@ -344,7 +369,7 @@ class SongEditorApp(TkinterDnD.Tk):
 
             self.make_label(frame, name).pack()
 
-            text_widget = tk.Text(frame, wrap=tk.WORD, bg="#2d2d2d", fg="#d4d4d4",
+            text_widget = tk.Text(frame, wrap=tk.WORD, bg=DARK_SURFACE, fg=DARK_FG,
                                   yscrollcommand=self.scrollbar.set)
             text_widget.pack(expand=True, fill=tk.BOTH)
 
@@ -393,7 +418,7 @@ class SongEditorApp(TkinterDnD.Tk):
         self.single_tab.grid_rowconfigure(0, weight=1)
         self.single_tab.grid_columnconfigure(0, weight=1)
 
-        self.single_text = tk.Text(self.single_tab, wrap=tk.WORD, bg="#2d2d2d", fg="#d4d4d4")
+        self.single_text = tk.Text(self.single_tab, wrap=tk.WORD, bg=DARK_SURFACE, fg=DARK_FG)
         self.single_text.grid(row=0, column=0, sticky="nsew")
         self.bind_unicode_fix(self.single_text)
         self.single_text.bind("<MouseWheel>", self._sync_all_scroll)
@@ -407,7 +432,7 @@ class SongEditorApp(TkinterDnD.Tk):
 
         self.make_label(self.groupnames_tab, "Edit GroupNames.txt:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
 
-        self.groupnames_text = tk.Text(self.groupnames_tab, wrap=tk.WORD, bg="#2d2d2d", fg="#d4d4d4")
+        self.groupnames_text = tk.Text(self.groupnames_tab, wrap=tk.WORD, bg=DARK_SURFACE, fg=DARK_FG)
         self.groupnames_text.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
         self.bind_unicode_fix(self.groupnames_text)
         self.groupnames_text.bind("<MouseWheel>", self._sync_all_scroll)
