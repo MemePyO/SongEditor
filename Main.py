@@ -4,7 +4,7 @@ import ttkbootstrap as tb
 from ttkbootstrap.constants import *
 import tkinter as tk
 from tkinter import filedialog
-from tkinter.font import nametofont
+from tkinter.font import nametofont, families
 import os
 import sys
 import json
@@ -15,6 +15,10 @@ from SongEditorPro7Generic import save_song, get_text_block_names
 from autocorrect import find_typos, get_spellchecker
 from tkinterdnd2 import DND_FILES, TkinterDnD
 import pymupdf as fitz
+
+# --- Modern label font ---
+LABEL_FONT_FAMILY = "Segoe UI Semibold"
+LABEL_FONT_SIZE = 10
 
 # --- Error Logging ---
 LOG_DIR = "logs"
@@ -85,6 +89,11 @@ class SongEditorApp(TkinterDnD.Tk):
         self.current_font_size = self.app_config.get("font_size", 11)
         default_theme = self.app_config.get("theme", "darkly")
         super().__init__()
+        self.label_font = (
+            (LABEL_FONT_FAMILY, LABEL_FONT_SIZE)
+            if LABEL_FONT_FAMILY in families()
+            else ("Segoe UI", LABEL_FONT_SIZE, "bold")
+        )
         self.style = tb.Style(theme=default_theme)
         self.title("ProPresenter7 Song Editor — Modern UI")
         self.geometry("1300x850")
@@ -191,6 +200,9 @@ class SongEditorApp(TkinterDnD.Tk):
     def bind_unicode_fix(self, widget):
         widget.bind("<KeyPress>", on_key_press)
 
+    def make_label(self, parent, text, **kwargs):
+        return tb.Label(parent, text=text, font=self.label_font, **kwargs)
+
     def on_font_slider_change(self, value):
         self.apply_font_size(int(float(value)))
 
@@ -236,28 +248,28 @@ class SongEditorApp(TkinterDnD.Tk):
     def init_ui(self):
 
         # Header (modern card)
-        header = tb.Frame(self, padding=10, bootstyle="secondary")
+        header = tb.Frame(self, padding=10)
         header.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
         header.grid_columnconfigure(2, weight=1)
 
-        tb.Label(header, text="Song Name:", bootstyle="light").grid(row=0, column=0, sticky="w")
+        self.make_label(header, "Song Name:").grid(row=0, column=0, sticky="w")
         self.song_title = tb.Entry(header, width=40, bootstyle="info")
         self.song_title.grid(row=0, column=1, padx=5)
         self.bind_unicode_fix(self.song_title)
 
-        tb.Label(header, text="Lines per Slide:", bootstyle="light").grid(row=0, column=2, sticky="e")
+        self.make_label(header, "Lines per Slide:").grid(row=0, column=2, sticky="e")
         self.line_count = tb.Entry(header, width=5, bootstyle="info")
         self.line_count.insert(0, "2")
         self.line_count.grid(row=0, column=3, padx=5)
         self.bind_unicode_fix(self.line_count)
 
-        tb.Label(header, text="Arrangement:", bootstyle="light").grid(row=1, column=0, sticky="w", pady=(5,0))
+        self.make_label(header, "Arrangement:").grid(row=1, column=0, sticky="w", pady=(5,0))
         self.arrangement_order = tb.Entry(header, width=80, bootstyle="info")
         self.arrangement_order.insert(0, "Verse 1, Chorus, Verse 2, Chorus, Bridge, Chorus")
         self.arrangement_order.grid(row=1, column=1, columnspan=5, padx=5, pady=(5,0), sticky="ew")
         self.bind_unicode_fix(self.arrangement_order)
 
-        tb.Label(header, text="Font Size:", bootstyle="light").grid(row=2, column=0, sticky="w", pady=(5,0))
+        self.make_label(header, "Font Size:").grid(row=2, column=0, sticky="w", pady=(5,0))
         self.font_slider = tb.Scale(header, from_=10, to=24, value=self.current_font_size, command=self.on_font_slider_change, bootstyle="info")
         self.font_slider.grid(row=2, column=1, columnspan=6, padx=5, pady=(5,0), sticky="ew")
 
@@ -316,10 +328,10 @@ class SongEditorApp(TkinterDnD.Tk):
         self.scrollbar.config(command=sync_scroll)
 
         # Number column
-        number_frame = tb.Frame(self.compare_tab, bootstyle="secondary")
+        number_frame = tb.Frame(self.compare_tab)
         number_frame.grid(row=0, column=0, sticky="nsew", padx=5)
 
-        tb.Label(number_frame, text="#", bootstyle="light").pack()
+        self.make_label(number_frame, "#").pack()
         self.number_widget = tk.Text(number_frame, wrap=tk.NONE, width=4,
                                      bg="#1e1e1e", fg="#d4d4d4", yscrollcommand=self.scrollbar.set)
         self.number_widget.pack(expand=True, fill=tk.BOTH)
@@ -327,10 +339,10 @@ class SongEditorApp(TkinterDnD.Tk):
 
         # Text columns
         for col, name in enumerate(self.text_block_names):
-            frame = tb.Frame(self.compare_tab, bootstyle="secondary")
+            frame = tb.Frame(self.compare_tab)
             frame.grid(row=0, column=col+1, sticky="nsew", padx=5)
 
-            tb.Label(frame, text=name, bootstyle="light").pack()
+            self.make_label(frame, name).pack()
 
             text_widget = tk.Text(frame, wrap=tk.WORD, bg="#2d2d2d", fg="#d4d4d4",
                                   yscrollcommand=self.scrollbar.set)
@@ -393,7 +405,7 @@ class SongEditorApp(TkinterDnD.Tk):
         self.groupnames_tab.grid_rowconfigure(1, weight=1)
         self.groupnames_tab.grid_columnconfigure(0, weight=1)
 
-        tb.Label(self.groupnames_tab, text="Edit GroupNames.txt:", bootstyle="light").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        self.make_label(self.groupnames_tab, "Edit GroupNames.txt:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
 
         self.groupnames_text = tk.Text(self.groupnames_tab, wrap=tk.WORD, bg="#2d2d2d", fg="#d4d4d4")
         self.groupnames_text.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
