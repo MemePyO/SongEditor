@@ -4,6 +4,7 @@ dist/
 build/
 _internal/
 logs/
+_re/
 *.pro
 config.json
 *.json
