@@ -21,6 +21,8 @@ LABEL_FONT_FAMILY = "Segoe UI Semibold"
 LABEL_FONT_SIZE = 10
 
 # --- Theme colors ---
+DARK_THEME = "bootstrap-dark"
+LIGHT_THEME = "bootstrap-light"
 DARK_BG = "#0f1b2d"        # dark blue tint (app background)
 DARK_SURFACE = "#16273d"   # text areas
 DARK_FG = "#dbe6f5"        # primary text
@@ -95,7 +97,11 @@ class SongEditorApp(TkinterDnD.Tk):
     def __init__(self, text_block_names, output_dir):
         self.app_config = load_config()
         self.current_font_size = self.app_config.get("font_size", 11)
-        default_theme = self.app_config.get("theme", "darkly")
+        default_theme = self.app_config.get("theme", DARK_THEME)
+        if default_theme in ("darkly",):
+            default_theme = DARK_THEME
+        elif default_theme in ("litera",):
+            default_theme = LIGHT_THEME
         super().__init__()
         self.label_font = (
             (LABEL_FONT_FAMILY, LABEL_FONT_SIZE)
@@ -253,15 +259,15 @@ class SongEditorApp(TkinterDnD.Tk):
         self.message_area.config(bg=bg, fg=fg)
 
     def toggle_theme(self):
-        if self.style.theme.name == "darkly":
-            self.style.theme_use("litera")
+        if self.style.theme.name == DARK_THEME:
+            self.style.theme_use(LIGHT_THEME)
             self.theme_btn.config(text="Dark Mode")
-            self.app_config["theme"] = "litera"
+            self.app_config["theme"] = LIGHT_THEME
             self.apply_theme_colors(light=True)
         else:
-            self.style.theme_use("darkly")
+            self.style.theme_use(DARK_THEME)
             self.theme_btn.config(text="Light Mode")
-            self.app_config["theme"] = "darkly"
+            self.app_config["theme"] = DARK_THEME
             self.apply_theme_colors(light=False)
         save_config(self.app_config)
 
@@ -328,7 +334,7 @@ class SongEditorApp(TkinterDnD.Tk):
         self.message_area.grid(row=3, column=0, padx=10, pady=5, sticky="ew")
         self.bind_unicode_fix(self.message_area)
 
-        self.apply_theme_colors(light=(self.style.theme.name == "litera"))
+        self.apply_theme_colors(light=(self.style.theme.name == LIGHT_THEME))
 
     # ---------------------------------------------------------
     # TRANSLATE VIEW — Modern UI + Highlight + Zebra
