@@ -281,6 +281,83 @@ class SongEditorApp(TkinterDnD.Tk):
         save_config(self.app_config)
 
     # ---------------------------------------------------------
+    def edit_arrangement(self):
+        win = tb.Toplevel(self)
+        win.title("Edit Arrangement")
+        win.geometry("420x420")
+        win.transient(self)
+
+        groups = []
+        for g in self.text_block_names:
+            pass
+        # collect unique group names from GroupNames.txt
+        try:
+            with open(resource_path("GroupNames.txt"), "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and line not in groups:
+                        groups.append(line)
+        except Exception:
+            groups = ["Verse 1", "Chorus", "Bridge"]
+
+        # parse current arrangement
+        current = [x.strip() for x in self.arrangement_order.get().split(",") if x.strip()]
+
+        tb.Label(win, text="Available groups:").pack(pady=(10, 2))
+        avail_lb = tk.Listbox(win, height=6)
+        avail_lb.pack(fill=tk.X, padx=10)
+        for g in groups:
+            avail_lb.insert(tk.END, g)
+
+        tb.Label(win, text="Arrangement (top to bottom):").pack(pady=(10, 2))
+        arr_lb = tk.Listbox(win, height=8)
+        arr_lb.pack(fill=tk.BOTH, expand=True, padx=10)
+        for g in current:
+            arr_lb.insert(tk.END, g)
+
+        def add_sel():
+            sel = avail_lb.curselection()
+            if sel:
+                arr_lb.insert(tk.END, avail_lb.get(sel[0]))
+
+        def remove_sel():
+            sel = arr_lb.curselection()
+            if sel:
+                arr_lb.delete(sel[0])
+
+        def move_up():
+            sel = arr_lb.curselection()
+            if sel and sel[0] > 0:
+                i = sel[0]
+                val = arr_lb.get(i)
+                arr_lb.delete(i)
+                arr_lb.insert(i - 1, val)
+                arr_lb.selection_set(i - 1)
+
+        def move_down():
+            sel = arr_lb.curselection()
+            if sel and sel[0] < arr_lb.size() - 1:
+                i = sel[0]
+                val = arr_lb.get(i)
+                arr_lb.delete(i)
+                arr_lb.insert(i + 1, val)
+                arr_lb.selection_set(i + 1)
+
+        btn_frame = tb.Frame(win)
+        btn_frame.pack(pady=5)
+        tb.Button(btn_frame, text="Add", command=add_sel).pack(side=tk.LEFT, padx=3)
+        tb.Button(btn_frame, text="Remove", command=remove_sel).pack(side=tk.LEFT, padx=3)
+        tb.Button(btn_frame, text="Up", command=move_up).pack(side=tk.LEFT, padx=3)
+        tb.Button(btn_frame, text="Down", command=move_down).pack(side=tk.LEFT, padx=3)
+
+        def apply():
+            items = [arr_lb.get(i) for i in range(arr_lb.size())]
+            self.arrangement_order.delete(0, tk.END)
+            self.arrangement_order.insert(0, ", ".join(items))
+            win.destroy()
+
+        tb.Button(win, text="Apply", bootstyle="success", command=apply).pack(pady=10)
+
     def load_template(self):
         path = filedialog.askopenfilename(
             initialdir=self.output_dir,
@@ -339,8 +416,9 @@ class SongEditorApp(TkinterDnD.Tk):
         self.make_label(header, "Arrangement:").grid(row=1, column=0, sticky="w", pady=(5,0))
         self.arrangement_order = tb.Entry(header, width=80, bootstyle="info")
         self.arrangement_order.insert(0, "Verse 1, Chorus, Verse 2, Chorus, Bridge, Chorus")
-        self.arrangement_order.grid(row=1, column=1, columnspan=6, padx=5, pady=(5,0), sticky="ew")
+        self.arrangement_order.grid(row=1, column=1, columnspan=4, padx=5, pady=(5,0), sticky="ew")
         self.bind_unicode_fix(self.arrangement_order)
+        tb.Button(header, text="Edit Arrangement", bootstyle="secondary-outline", command=self.edit_arrangement).grid(row=1, column=5, padx=5, pady=(5,0))
 
         self.make_label(header, "Font Size:").grid(row=2, column=0, sticky="w", pady=(5,0))
         self.font_slider = tb.Scale(header, from_=10, to=24, value=self.current_font_size, command=self.on_font_slider_change, bootstyle="info")
