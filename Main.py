@@ -426,7 +426,7 @@ class SongEditorApp(TkinterDnD.Tk):
         # Header (modern card)
         header = tb.Frame(self, padding=10)
         header.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
-        header.grid_columnconfigure(3, weight=1)
+        header.grid_columnconfigure(4, weight=1)
 
         self.make_label(header, "Song Name:").grid(row=0, column=0, sticky="w")
         self.song_title = tb.Combobox(header, width=34, bootstyle="info")
@@ -438,29 +438,30 @@ class SongEditorApp(TkinterDnD.Tk):
         tb.Button(header, text="Import", bootstyle="info-outline", command=self.import_from_melodii_action).grid(row=0, column=2, padx=5)
         tb.Button(header, text="Load Template", bootstyle="secondary-outline", command=self.load_template).grid(row=0, column=3, padx=5)
 
-        self.make_label(header, "Lines per Slide:").grid(row=0, column=4, sticky="e")
+        self.make_label(header, "Lines per Slide:").grid(row=0, column=5, sticky="e")
         self.line_count = tb.Entry(header, width=5, bootstyle="info")
         self.line_count.insert(0, "2")
-        self.line_count.grid(row=0, column=5, padx=5)
+        self.line_count.grid(row=0, column=6, padx=5)
         self.bind_unicode_fix(self.line_count)
+
+        tb.Button(header, text="Open", bootstyle="primary-outline", command=self.open_file).grid(row=0, column=7, padx=5)
+        tb.Button(header, text="Import ChordPro", bootstyle="secondary-outline", command=self.import_chordpro).grid(row=0, column=8, padx=5)
+        tb.Button(header, text="Save", bootstyle="success-outline", command=self.save_song_action).grid(row=0, column=9, padx=5)
+        tb.Button(header, text="Check Typos", bootstyle="danger-outline", command=self.check_typos_action).grid(row=0, column=10, padx=5)
 
         self.make_label(header, "Arrangement:").grid(row=1, column=0, sticky="w", pady=(5,0))
         self.arrangement_order = tb.Entry(header, width=80, bootstyle="info")
         self.arrangement_order.insert(0, "Verse 1, Chorus, Verse 2, Chorus, Bridge, Chorus")
         self.arrangement_order.grid(row=1, column=1, columnspan=4, padx=5, pady=(5,0), sticky="ew")
         self.bind_unicode_fix(self.arrangement_order)
-        tb.Button(header, text="Edit Arrangement", bootstyle="secondary-outline", command=self.edit_arrangement).grid(row=1, column=5, padx=5, pady=(5,0))
+        tb.Button(header, text="Edit Arrangement", bootstyle="secondary-outline", command=self.edit_arrangement).grid(row=1, column=5, columnspan=2, padx=5, pady=(5,0))
+
+        self.theme_btn = tb.Button(header, text="Light Mode", bootstyle="secondary-outline", command=self.toggle_theme)
+        self.theme_btn.grid(row=1, column=10, padx=5, pady=(5,0), sticky="e")
 
         self.make_label(header, "Font Size:").grid(row=2, column=0, sticky="w", pady=(5,0))
         self.font_slider = tb.Scale(header, from_=10, to=24, value=self.current_font_size, command=self.on_font_slider_change, bootstyle="info")
-        self.font_slider.grid(row=2, column=1, columnspan=7, padx=5, pady=(5,0), sticky="ew")
-
-        tb.Button(header, text="Open", bootstyle="primary-outline", command=self.open_file).grid(row=0, column=5, padx=10)
-        tb.Button(header, text="Import ChordPro", bootstyle="secondary-outline", command=self.import_chordpro).grid(row=0, column=6, padx=5)
-        tb.Button(header, text="Save", bootstyle="success-outline", command=self.save_song_action).grid(row=0, column=6)
-        tb.Button(header, text="Check Typos", bootstyle="danger-outline", command=self.check_typos_action).grid(row=0, column=7, padx=10)
-        self.theme_btn = tb.Button(header, text="Light Mode", bootstyle="secondary-outline", command=self.toggle_theme)
-        self.theme_btn.grid(row=1, column=7, padx=10, pady=(5,0), sticky="e")
+        self.font_slider.grid(row=2, column=1, columnspan=9, padx=5, pady=(5,0), sticky="ew")
 
         # Notebook
         self.notebook = tb.Notebook(self, bootstyle="primary")
