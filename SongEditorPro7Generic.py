@@ -211,12 +211,17 @@ def inject_text_into_rtf(template_rtf_bytes, new_text_lines, font_size=None, fon
 def gen_pro_data(text_block_names, song_texts, line_count,
                  per_block_colors=None, per_block_styles=None,
                  per_block_sizes=None, per_block_families=None,
-                 arrangement_order=None):
+                 arrangement_order=None,
+                 template_path=None):
 
-    sample_file = r"Template.pro"
+    sample_file = template_path if template_path else r"Template.pro"
+    if os.path.isabs(sample_file):
+        open_path = sample_file
+    else:
+        open_path = resource_path(sample_file)
     presentation_obj = presentation_pb2.Presentation()
 
-    with open(resource_path(sample_file), "rb") as f:
+    with open(open_path, "rb") as f:
         presentation_obj.ParseFromString(f.read())
 
     presentation_obj.uuid.string = make_uuid()
@@ -345,7 +350,7 @@ def gen_pro_data(text_block_names, song_texts, line_count,
 # ---------------------------------------------------------
 #  SAVE SONG
 # ---------------------------------------------------------
-def save_song(text_block_names, song_texts, line_count, output_filename, font_data=None, arrangement_order=None):
+def save_song(text_block_names, song_texts, line_count, output_filename, font_data=None, arrangement_order=None, template_path=None):
 
     with open(output_filename + ".json", "w", encoding="utf-8") as f:
         json.dump(song_texts, f, ensure_ascii=False, indent=2)
@@ -374,17 +379,22 @@ def save_song(text_block_names, song_texts, line_count, output_filename, font_da
             per_block_styles=styles,
             per_block_sizes=sizes,
             per_block_families=families,
-            arrangement_order=arrangement_order
+            arrangement_order=arrangement_order,
+            template_path=template_path
         ))
 
 
 # ---------------------------------------------------------
 #  MAIN
 # ---------------------------------------------------------
-def get_text_block_names():
-    sample_file = r"Template.pro"
+def get_text_block_names(template_path=None):
+    sample_file = template_path if template_path else r"Template.pro"
+    if os.path.isabs(sample_file):
+        open_path = sample_file
+    else:
+        open_path = resource_path(sample_file)
     presentation_obj = presentation_pb2.Presentation()
-    with open(resource_path(sample_file), "rb") as f:
+    with open(open_path, "rb") as f:
         presentation_obj.ParseFromString(f.read())
     return [el.element.name for el in presentation_obj.cues[-1].actions[0].slide.presentation.base_slide.elements]
 

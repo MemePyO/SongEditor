@@ -118,6 +118,7 @@ class SongEditorApp(TkinterDnD.Tk):
         self.output_dir = output_dir
         self.text_widgets = {}
         self._syncing_single = False
+        self.template_path = self.app_config.get("template_path", None)
 
         self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -280,6 +281,36 @@ class SongEditorApp(TkinterDnD.Tk):
         save_config(self.app_config)
 
     # ---------------------------------------------------------
+    def load_template(self):
+        path = filedialog.askopenfilename(
+            initialdir=self.output_dir,
+            filetypes=[("ProPresenter", "*.pro")],
+            title="Select Template.pro")
+        if not path:
+            return
+        try:
+            new_names = get_text_block_names(path)
+        except Exception as e:
+            self.show_message("Invalid template: " + str(e))
+            log_error("Failed to load template")
+            return
+        if not new_names:
+            self.show_message("Template has no text blocks.")
+            return
+        self.template_path = path
+        self.app_config["template_path"] = path
+        save_config(self.app_config)
+        self.text_block_names = new_names
+        self.text_widgets = {}
+        for child in self.compare_tab.winfo_children():
+            child.destroy()
+        for child in self.single_tab.winfo_children():
+            child.destroy()
+        self.build_compare_tab()
+        self.build_single_tab()
+        self.show_message("Loaded template: " + os.path.basename(path)
+                          + " - " + ", ".join(new_names))
+
     # UI BUILD
     # ---------------------------------------------------------
     def init_ui(self):
@@ -297,11 +328,12 @@ class SongEditorApp(TkinterDnD.Tk):
         self.refresh_song_autocomplete()
 
         tb.Button(header, text="Import", bootstyle="info-outline", command=self.import_from_melodii_action).grid(row=0, column=2, padx=5)
+        tb.Button(header, text="Load Template", bootstyle="secondary-outline", command=self.load_template).grid(row=0, column=3, padx=5)
 
-        self.make_label(header, "Lines per Slide:").grid(row=0, column=3, sticky="e")
+        self.make_label(header, "Lines per Slide:").grid(row=0, column=4, sticky="e")
         self.line_count = tb.Entry(header, width=5, bootstyle="info")
         self.line_count.insert(0, "2")
-        self.line_count.grid(row=0, column=4, padx=5)
+        self.line_count.grid(row=0, column=5, padx=5)
         self.bind_unicode_fix(self.line_count)
 
         self.make_label(header, "Arrangement:").grid(row=1, column=0, sticky="w", pady=(5,0))
@@ -710,7 +742,7 @@ class SongEditorApp(TkinterDnD.Tk):
         output_file = os.path.join(self.output_dir, title)
 
         try:
-            save_song(self.text_block_names, song_texts, max_lines, output_file, arrangement_order=self.arrangement_order.get().strip())
+            save_song(self.text_block_names, song_texts, max_lines, output_file, arrangement_order=self.arrangement_order.get().strip(), template_path=self.template_path)
             save_json_to_melodii(title, song_texts)
             self.refresh_song_autocomplete()
             self.show_message(f"Saved! Import in ProPresenter: File → Import → {output_file}.pro")
@@ -750,7 +782,8 @@ class SongEditorApp(TkinterDnD.Tk):
 
         try:
             save_single(block_name, {block_name: lines}, max_lines, output_file,
-                        arrangement_order=self.arrangement_order.get().strip())
+                        arrangement_order=self.arrangement_order.get().strip(),
+                        template_path=self.template_path)
             self.show_message(f"Saved single! Import in ProPresenter: File → Import → {output_file}.pro")
         except Exception as e:
             self.show_message("Single download failed: " + str(e))
@@ -795,8 +828,9 @@ if __name__ == "__main__":
     logging.info("Application started")
 
     try:
-        text_block_names = get_text_block_names()
-        logging.info(f"Text block names: {text_block_names}")
+        template_path = load_config().get("template_path", None)
+        text_block_names = get_text_block_names(template_path)
+        logging.info(f"Text block names: {text_block_names} (template: {template_path})")
         output_dir = get_download_path()
         logging.info(f"Output directory: {output_dir}")
         app = SongEditorApp(text_block_names, output_dir)
