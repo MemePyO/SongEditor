@@ -90,6 +90,21 @@ class TestSplitSlides:
         slides = split_slides(names, texts, 2)
         assert len(slides) == 2
 
+    def test_preview_model_realistic(self):
+        names = ["Romana", "Engleza"]
+        texts = {
+            "Romana": ["Verse 1", "linia 1", "linia 2", "linia 3", "Chorus", "ref 1", "ref 2"],
+            "Engleza": ["Verse 1", "line 1", "line 2", "line 3", "Chorus", "cho 1", "cho 2"],
+        }
+        slides = split_slides(names, texts, 2)
+        assert [s["label"] for s in slides] == ["Verse 1", "Verse 1", "Chorus"]
+        assert slides[0]["Romana"] == ["linia 1", "linia 2"]
+        assert slides[1]["Romana"] == ["linia 3"]
+        assert slides[2]["Engleza"] == ["cho 1", "cho 2"]
+        for slide in slides:
+            assert "Verse 1" not in slide["Romana"]
+            assert "Chorus" not in slide["Romana"]
+
 
 
 class TestFindTypos:

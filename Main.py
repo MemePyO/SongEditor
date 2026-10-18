@@ -11,7 +11,7 @@ import json
 import logging
 import threading
 import re
-from SongEditorPro7Generic import save_song, get_text_block_names
+from SongEditorPro7Generic import save_song, get_text_block_names, split_slides
 from single_export import save_single
 from melodii import saved_song_names, save_json_to_melodii, load_json_from_melodii, find_saved_song
 from autocorrect import find_typos, get_spellchecker
@@ -118,6 +118,7 @@ class SongEditorApp(TkinterDnD.Tk):
         self.output_dir = output_dir
         self.text_widgets = {}
         self._syncing_single = False
+        self._preview_refresh_job = None
         self.template_path = self.app_config.get("template_path", None)
 
         self.grid_rowconfigure(1, weight=1)
@@ -217,6 +218,7 @@ class SongEditorApp(TkinterDnD.Tk):
         self.single_number_widget.delete("1.0", tk.END)
         self.single_number_widget.insert("1.0", "\n".join(str(i+1) for i in range(line_count)))
         self.show_message(f"Loaded: {os.path.basename(path)}")
+        self._schedule_preview_refresh()
 
     def bind_unicode_fix(self, widget):
         widget.bind("<KeyPress>", on_key_press)
@@ -266,6 +268,8 @@ class SongEditorApp(TkinterDnD.Tk):
         self.number_widget.config(bg=bg, fg=fg)
         self.single_number_widget.config(bg=bg, fg=fg)
         self.message_area.config(bg=bg, fg=fg)
+        if hasattr(self, "preview_canvas"):
+            self.preview_canvas.config(bg=bg)
 
     def toggle_theme(self):
         if self.style.theme.name == DARK_THEME:
@@ -443,6 +447,8 @@ class SongEditorApp(TkinterDnD.Tk):
         self.line_count.insert(0, "2")
         self.line_count.grid(row=0, column=6, padx=5)
         self.bind_unicode_fix(self.line_count)
+        self.line_count.bind("<KeyRelease>", self._schedule_preview_refresh)
+        self.line_count.bind("<FocusOut>", self._schedule_preview_refresh)
 
         tb.Button(header, text="Open", bootstyle="primary-outline", command=self.open_file).grid(row=0, column=7, padx=5)
         tb.Button(header, text="Import ChordPro", bootstyle="secondary-outline", command=self.import_chordpro).grid(row=0, column=8, padx=5)
@@ -470,14 +476,19 @@ class SongEditorApp(TkinterDnD.Tk):
         self.compare_tab = tb.Frame(self.notebook)
         self.single_tab = tb.Frame(self.notebook)
         self.groupnames_tab = tb.Frame(self.notebook)
+        self.preview_tab = tb.Frame(self.notebook)
 
         self.notebook.add(self.compare_tab, text="Translate View")
         self.notebook.add(self.single_tab, text="Single View")
+        self.notebook.add(self.preview_tab, text="Slide Preview")
         self.notebook.add(self.groupnames_tab, text="Edit Group Names")
 
         self.build_compare_tab()
         self.build_single_tab()
+        self.build_preview_tab()
         self.build_groupnames_tab()
+
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
         # Group Names Preview
         self.label_hint = tb.Label(self, justify=tk.LEFT, wraplength=1000, bootstyle="secondary")
@@ -538,6 +549,7 @@ class SongEditorApp(TkinterDnD.Tk):
             self.text_widgets[name] = text_widget
             text_widget.bind("<Motion>", self.on_hover)
             text_widget.bind("<KeyRelease>", self.update_number_widget)
+            text_widget.bind("<KeyRelease>", self._schedule_preview_refresh, add="+")
 
         self.number_widget.bind("<MouseWheel>", self._sync_all_scroll)
         for wname, widget in self.text_widgets.items():
@@ -617,6 +629,7 @@ class SongEditorApp(TkinterDnD.Tk):
         self.single_text.bind("<Motion>", self.on_single_hover)
         self.single_number_widget.bind("<Motion>", self.on_single_hover)
         self.single_text.bind("<KeyRelease>", self._mirror_single_to_compare)
+        self.single_text.bind("<KeyRelease>", self._schedule_preview_refresh, add="+")
         self.single_text.bind("<MouseWheel>", self._sync_single_scroll)
         self.single_number_widget.bind("<MouseWheel>", self._sync_single_scroll)
         self.single_text.drop_target_register(DND_FILES)
@@ -672,6 +685,117 @@ class SongEditorApp(TkinterDnD.Tk):
         self.update_single_number_widget()
         self.update_number_widget()
 
+
+    # ---------------------------------------------------------
+    # SLIDE PREVIEW TAB
+    # ---------------------------------------------------------
+    def build_preview_tab(self):
+        self.preview_tab.grid_rowconfigure(1, weight=1)
+        self.preview_tab.grid_columnconfigure(0, weight=1)
+
+        toolbar = tb.Frame(self.preview_tab)
+        toolbar.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 5))
+        tb.Button(toolbar, text="Refresh Preview", bootstyle="info-outline",
+                  command=self.refresh_preview).pack(side=tk.LEFT)
+        self.preview_primary_only = tk.BooleanVar(value=False)
+        tb.Checkbutton(toolbar, text="Primary language only",
+                       variable=self.preview_primary_only,
+                       bootstyle="info-round-toggle",
+                       command=self.refresh_preview).pack(side=tk.LEFT, padx=10)
+        self.preview_count_label = tb.Label(toolbar, text="", bootstyle="secondary")
+        self.preview_count_label.pack(side=tk.LEFT, padx=10)
+
+        body = tb.Frame(self.preview_tab)
+        body.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        body.grid_rowconfigure(0, weight=1)
+        body.grid_columnconfigure(0, weight=1)
+
+        self.preview_canvas = tk.Canvas(body, highlightthickness=0, bg=DARK_BG)
+        self.preview_canvas.grid(row=0, column=0, sticky="nsew")
+        preview_scrollbar = tb.Scrollbar(body, orient="vertical", bootstyle="info",
+                                         command=self.preview_canvas.yview)
+        preview_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.preview_canvas.configure(yscrollcommand=preview_scrollbar.set)
+
+        self.preview_inner = tb.Frame(self.preview_canvas)
+        self._preview_window = self.preview_canvas.create_window(
+            (0, 0), window=self.preview_inner, anchor="nw")
+
+        self.preview_inner.bind("<Configure>", self._on_preview_inner_configure)
+        self.preview_canvas.bind("<Configure>", self._on_preview_canvas_configure)
+        self.preview_canvas.bind("<MouseWheel>", self._on_preview_mousewheel)
+        self.preview_inner.bind("<MouseWheel>", self._on_preview_mousewheel)
+
+    def _on_preview_inner_configure(self, event=None):
+        self.preview_canvas.configure(scrollregion=self.preview_canvas.bbox("all"))
+
+    def _on_preview_canvas_configure(self, event):
+        self.preview_canvas.itemconfigure(self._preview_window, width=event.width)
+
+    def _on_preview_mousewheel(self, event):
+        self.preview_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        return "break"
+
+    def _on_tab_changed(self, event=None):
+        try:
+            if self.notebook.select() == str(self.preview_tab):
+                self.refresh_preview()
+        except Exception:
+            pass
+
+    def _schedule_preview_refresh(self, event=None):
+        if self._preview_refresh_job is not None:
+            try:
+                self.after_cancel(self._preview_refresh_job)
+            except Exception:
+                pass
+        self._preview_refresh_job = self.after(400, self.refresh_preview)
+
+    def refresh_preview(self, event=None):
+        self._preview_refresh_job = None
+        if not hasattr(self, "preview_inner"):
+            return
+
+        for child in self.preview_inner.winfo_children():
+            child.destroy()
+
+        song_texts = self.collect_song_texts()
+        max_lines = self.parse_max_lines()
+        primary_only = self.preview_primary_only.get()
+        names = [self.text_block_names[0]] if primary_only else list(self.text_block_names)
+
+        try:
+            slides = split_slides(self.text_block_names, song_texts, max_lines)
+        except Exception as e:
+            self.preview_count_label.config(text="Preview unavailable: " + str(e))
+            return
+
+        total = len(slides)
+        self.preview_count_label.config(text=f"{total} slide(s)")
+
+        if total == 0:
+            tb.Label(self.preview_inner, text="No slides yet - add some lyrics.",
+                     bootstyle="secondary").pack(anchor="w", padx=5, pady=5)
+            return
+
+        for idx, slide in enumerate(slides, start=1):
+            label = slide.get("label", "")
+            card = tb.Labelframe(
+                self.preview_inner, text=f"#{idx} / {total}  -  {label}",
+                bootstyle="info", padding=8)
+            card.pack(fill=tk.X, padx=5, pady=4)
+            for col, name in enumerate(names):
+                col_frame = tb.Frame(card)
+                col_frame.grid(row=0, column=col, sticky="nw", padx=(0, 24))
+                tb.Label(col_frame, text=name, font=self.label_font,
+                         bootstyle="info").pack(anchor="w")
+                lines = slide.get(name, [])
+                tb.Label(col_frame, text="\n".join(lines) if lines else " ",
+                         justify=tk.LEFT, bootstyle="secondary",
+                         wraplength=320).pack(anchor="w")
+
+        self.preview_inner.update_idletasks()
+        self.preview_canvas.configure(scrollregion=self.preview_canvas.bbox("all"))
 
     # ---------------------------------------------------------
     # GROUP NAMES TAB
@@ -759,6 +883,7 @@ class SongEditorApp(TkinterDnD.Tk):
 
         if label:
             self.show_message(label)
+        self._schedule_preview_refresh()
 
     def refresh_song_autocomplete(self):
         self.song_title["values"] = saved_song_names()
@@ -806,6 +931,18 @@ class SongEditorApp(TkinterDnD.Tk):
         except Exception:
             return []
 
+    def collect_song_texts(self):
+        return {name: self.text_widgets[name].get("1.0", tk.END).splitlines()
+                for name in self.text_block_names}
+
+    def parse_max_lines(self):
+        try:
+            return int(self.line_count.get())
+        except (ValueError, TypeError):
+            self.line_count.delete(0, tk.END)
+            self.line_count.insert(0, "2")
+            return 2
+
     def validate_group_labels(self, song_texts):
         known = set(self.get_known_labels())
         unknown = set()
@@ -830,8 +967,7 @@ class SongEditorApp(TkinterDnD.Tk):
         for char in r":\\|/?*&^%$#@!~`'\";,.<>":
             title = title.replace(char, " ")
 
-        song_texts = {name: self.text_widgets[name].get("1.0", tk.END).splitlines()
-                      for name in self.text_block_names}
+        song_texts = self.collect_song_texts()
 
         unknown = self.validate_group_labels(song_texts)
         if unknown:
@@ -839,12 +975,7 @@ class SongEditorApp(TkinterDnD.Tk):
             if not tb.dialogs.Messagebox.yesno(msg, "Unknown Labels"):
                 return
 
-        try:
-            max_lines = int(self.line_count.get())
-        except:
-            max_lines = 2
-            self.line_count.delete(0, tk.END)
-            self.line_count.insert(0, "2")
+        max_lines = self.parse_max_lines()
 
         max_len = max(len(song_texts[name]) for name in self.text_block_names)
         self.number_widget.delete("1.0", tk.END)
@@ -882,12 +1013,7 @@ class SongEditorApp(TkinterDnD.Tk):
             if not tb.dialogs.Messagebox.yesno(msg, "Unknown Labels"):
                 return
 
-        try:
-            max_lines = int(self.line_count.get())
-        except Exception:
-            max_lines = 2
-            self.line_count.delete(0, tk.END)
-            self.line_count.insert(0, "2")
+        max_lines = self.parse_max_lines()
 
         output_file = os.path.join(self.output_dir, title + " (Single)")
 
