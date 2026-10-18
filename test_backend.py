@@ -1,6 +1,8 @@
 import pytest
 from SongEditorPro7Generic import escape_cocoa_rtf, rtf_text_start, inject_text_into_rtf, split_slides
 from autocorrect import find_typos
+import presentation_pb2
+from single_export import gen_single_pro
 
 
 class TestEscapeCocoaRtf:
@@ -105,3 +107,44 @@ class TestFindTypos:
         from autocorrect import get_spellchecker
         spell = get_spellchecker()
         assert find_typos("", spell) == []
+
+
+class TestSingleExport:
+    def _element_names(self, raw):
+        p = presentation_pb2.Presentation()
+        p.ParseFromString(raw)
+        names = set()
+        for cue in p.cues:
+            for action in cue.actions:
+                for el in action.slide.presentation.base_slide.elements:
+                    names.add(el.element.name)
+        return names
+
+    def test_only_single_block_remains(self):
+        texts = {"Romana": ["Verse 1", "hello world", "again here"]}
+        raw = gen_single_pro("Romana", texts, 2)
+        assert self._element_names(raw) == {"Romana"}
+
+    def test_keep_other_blocks_when_disabled(self):
+        texts = {"Romana": ["hello world"]}
+        raw = gen_single_pro("Romana", texts, 2, remove_other_blocks=False)
+        assert self._element_names(raw) == {"Romana", "Engleza"}
+
+    def test_text_injected(self):
+        texts = {"Romana": ["hello world"]}
+        raw = gen_single_pro("Romana", texts, 2)
+        p = presentation_pb2.Presentation()
+        p.ParseFromString(raw)
+        rtfs = [el.element.text.rtf_data
+                for cue in p.cues for action in cue.actions
+                for el in action.slide.presentation.base_slide.elements]
+        assert any(b"hello world" in rtf for rtf in rtfs)
+
+    def test_groups_generated(self):
+        texts = {"Romana": ["Verse 1", "hello world", "Chorus", "la la la"]}
+        raw = gen_single_pro("Romana", texts, 2)
+        p = presentation_pb2.Presentation()
+        p.ParseFromString(raw)
+        group_names = {cg.group.name for cg in p.cue_groups}
+        assert "Verse 1" in group_names
+        assert "Chorus" in group_names

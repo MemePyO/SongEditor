@@ -12,6 +12,7 @@ import logging
 import threading
 import re
 from SongEditorPro7Generic import save_song, get_text_block_names
+from single_export import save_single
 from autocorrect import find_typos, get_spellchecker
 from tkinterdnd2 import DND_FILES, TkinterDnD
 import pymupdf as fitz
@@ -115,6 +116,7 @@ class SongEditorApp(TkinterDnD.Tk):
         self.text_block_names = text_block_names
         self.output_dir = output_dir
         self.text_widgets = {}
+        self._syncing_single = False
 
         self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -202,13 +204,16 @@ class SongEditorApp(TkinterDnD.Tk):
             if second and second in self.text_widgets:
                 self.text_widgets[second].delete("1.0", tk.END)
                 self.text_widgets[second].insert("1.0", en_text)
-        self.single_text.delete("1.0", tk.END)
-        self.single_text.insert("1.0", ro_text)
+        self._syncing_single = True
+        self._set_text(self.single_text, ro_text)
+        self._syncing_single = False
         self.song_title.delete(0, tk.END)
         self.song_title.insert(0, os.path.basename(path).replace(".pdf", ""))
         line_count = len(ro_text.splitlines())
         self.number_widget.delete("1.0", tk.END)
         self.number_widget.insert("1.0", "\n".join(str(i+1) for i in range(line_count)))
+        self.single_number_widget.delete("1.0", tk.END)
+        self.single_number_widget.insert("1.0", "\n".join(str(i+1) for i in range(line_count)))
         self.show_message(f"Loaded: {os.path.basename(path)}")
 
     def bind_unicode_fix(self, widget):
@@ -233,6 +238,7 @@ class SongEditorApp(TkinterDnD.Tk):
         for w in list(self.text_widgets.values()) + [self.single_text, self.groupnames_text, self.message_area]:
             w.config(font=font)
         self.number_widget.config(font=("Segoe UI", size))
+        self.single_number_widget.config(font=("Segoe UI", size))
         self.app_config["font_size"] = size
         save_config(self.app_config)
 
@@ -256,6 +262,7 @@ class SongEditorApp(TkinterDnD.Tk):
         for w in list(self.text_widgets.values()) + [self.single_text, self.groupnames_text]:
             w.config(bg=surface, fg=fg)
         self.number_widget.config(bg=bg, fg=fg)
+        self.single_number_widget.config(bg=bg, fg=fg)
         self.message_area.config(bg=bg, fg=fg)
 
     def toggle_theme(self):
@@ -422,12 +429,101 @@ class SongEditorApp(TkinterDnD.Tk):
     # ---------------------------------------------------------
     def build_single_tab(self):
         self.single_tab.grid_rowconfigure(0, weight=1)
-        self.single_tab.grid_columnconfigure(0, weight=1)
+        self.single_tab.grid_columnconfigure(1, weight=1)
 
-        self.single_text = tk.Text(self.single_tab, wrap=tk.WORD, bg=DARK_SURFACE, fg=DARK_FG)
-        self.single_text.grid(row=0, column=0, sticky="nsew")
+        # Scrollbar
+        self.single_scrollbar = tb.Scrollbar(self.single_tab, orient="vertical", bootstyle="info")
+        self.single_scrollbar.grid(row=0, column=2, sticky="ns")
+
+        def sync_scroll(*args):
+            self.single_number_widget.yview(*args)
+            self.single_text.yview(*args)
+
+        self.single_scrollbar.config(command=sync_scroll)
+
+        # Number column
+        single_number_frame = tb.Frame(self.single_tab)
+        single_number_frame.grid(row=0, column=0, sticky="nsew", padx=5)
+        self.make_label(single_number_frame, "#").pack()
+        self.single_number_widget = tk.Text(
+            single_number_frame, wrap=tk.NONE, width=4,
+            bg=DARK_BG, fg=DARK_FG, yscrollcommand=self.single_scrollbar.set)
+        self.single_number_widget.pack(expand=True, fill=tk.BOTH)
+
+        # Text column
+        single_text_frame = tb.Frame(self.single_tab)
+        single_text_frame.grid(row=0, column=1, sticky="nsew", padx=5)
+        self.make_label(single_text_frame, self.text_block_names[0]).pack()
+        self.single_text = tk.Text(single_text_frame, wrap=tk.WORD,
+                                   bg=DARK_SURFACE, fg=DARK_FG,
+                                   yscrollcommand=self.single_scrollbar.set)
+        self.single_text.pack(expand=True, fill=tk.BOTH)
         self.bind_unicode_fix(self.single_text)
-        self.single_text.bind("<MouseWheel>", self._sync_all_scroll)
+
+        # Download button
+        tb.Button(self.single_tab, text="Download as Single",
+                  bootstyle="primary", command=self.download_single_action).grid(
+            row=1, column=1, pady=10)
+
+        # Behavior wired like the compare columns
+        self.single_text.bind("<Motion>", self.on_single_hover)
+        self.single_number_widget.bind("<Motion>", self.on_single_hover)
+        self.single_text.bind("<KeyRelease>", self._mirror_single_to_compare)
+        self.single_text.bind("<MouseWheel>", self._sync_single_scroll)
+        self.single_number_widget.bind("<MouseWheel>", self._sync_single_scroll)
+        self.single_text.drop_target_register(DND_FILES)
+        self.single_text.dnd_bind('<<Drop>>', lambda e: self.handle_pdf_drop(e, self.text_block_names[0]))
+
+        # Mirror the first/primary block (Romana) both ways
+        self.text_widgets[self.text_block_names[0]].bind(
+            "<KeyRelease>", self._mirror_compare_to_single, add="+")
+
+    def on_single_hover(self, event):
+        index = event.widget.index(f"@0,{event.y}")
+        line = index.split(".")[0]
+        self.single_text.tag_remove("hover", "1.0", tk.END)
+        self.single_number_widget.tag_remove("hover", "1.0", tk.END)
+        self.single_text.tag_add("hover", f"{line}.0", f"{line}.end")
+        self.single_text.tag_config("hover", background="#004d40")
+        self.single_number_widget.tag_add("hover", f"{line}.0", f"{line}.end")
+        self.single_number_widget.tag_config("hover", background="#004d40")
+
+    def update_single_number_widget(self, event=None):
+        text = self.single_text.get("1.0", tk.END)
+        line_count = len(text.splitlines())
+        self.single_number_widget.delete("1.0", tk.END)
+        self.single_number_widget.insert("1.0", "\n".join(str(i+1) for i in range(line_count)))
+
+    def _sync_single_scroll(self, event):
+        self.single_number_widget.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        self.single_text.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        return "break"
+
+    def _set_text(self, widget, content):
+        widget.delete("1.0", tk.END)
+        widget.insert("1.0", content)
+        widget.edit_modified(False)
+
+    def _mirror_single_to_compare(self, event=None):
+        if self._syncing_single:
+            return
+        first = self.text_block_names[0]
+        self._syncing_single = True
+        self._set_text(self.text_widgets[first], self.single_text.get("1.0", "end-1c"))
+        self._syncing_single = False
+        self.update_single_number_widget()
+        self.update_number_widget()
+
+    def _mirror_compare_to_single(self, event=None):
+        if self._syncing_single:
+            return
+        first = self.text_block_names[0]
+        self._syncing_single = True
+        self._set_text(self.single_text, self.text_widgets[first].get("1.0", "end-1c"))
+        self._syncing_single = False
+        self.update_single_number_widget()
+        self.update_number_widget()
+
 
     # ---------------------------------------------------------
     # GROUP NAMES TAB
@@ -503,8 +599,10 @@ class SongEditorApp(TkinterDnD.Tk):
             self.song_title.delete(0, tk.END)
             self.song_title.insert(0, os.path.basename(path).replace(".json", ""))
 
-            self.single_text.delete("1.0", tk.END)
-            self.single_text.insert("1.0", self.text_widgets[self.text_block_names[0]].get("1.0", tk.END))
+            self._syncing_single = True
+            self._set_text(self.single_text, self.text_widgets[self.text_block_names[0]].get("1.0", tk.END))
+            self._syncing_single = False
+            self.update_single_number_widget()
 
             self.show_message(f"Opened: {path}")
         except Exception as e:
@@ -585,6 +683,44 @@ class SongEditorApp(TkinterDnD.Tk):
         except Exception as e:
             self.show_message("Save failed: " + str(e))
             log_error("Failed to save song")
+
+    # ---------------------------------------------------------
+    # DOWNLOAD AS SINGLE — .pro with only the primary block
+    # ---------------------------------------------------------
+    def download_single_action(self):
+        title = self.song_title.get().strip()
+        if not title:
+            self.show_message("Please enter a song title.")
+            return
+
+        for char in r":\\|/?*&^%$#@!~`'\";,.<>":
+            title = title.replace(char, " ")
+
+        block_name = self.text_block_names[0]
+        lines = self.single_text.get("1.0", tk.END).splitlines()
+
+        unknown = self.validate_group_labels({block_name: lines})
+        if unknown:
+            msg = "Unknown group labels found:\n\n" + "\n".join(unknown) + "\n\nDownload anyway?"
+            if not tb.dialogs.Messagebox.yesno(msg, "Unknown Labels"):
+                return
+
+        try:
+            max_lines = int(self.line_count.get())
+        except Exception:
+            max_lines = 2
+            self.line_count.delete(0, tk.END)
+            self.line_count.insert(0, "2")
+
+        output_file = os.path.join(self.output_dir, title + " (Single)")
+
+        try:
+            save_single(block_name, {block_name: lines}, max_lines, output_file,
+                        arrangement_order=self.arrangement_order.get().strip())
+            self.show_message(f"Saved single! Import in ProPresenter: File → Import → {output_file}.pro")
+        except Exception as e:
+            self.show_message("Single download failed: " + str(e))
+            log_error("Failed to download single")
 
     # ---------------------------------------------------------
     # CHECK TYPOS (highlight only)
