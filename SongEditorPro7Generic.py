@@ -212,7 +212,8 @@ def gen_pro_data(text_block_names, song_texts, line_count,
                  per_block_colors=None, per_block_styles=None,
                  per_block_sizes=None, per_block_families=None,
                  arrangement_order=None,
-                 template_path=None):
+                 template_path=None,
+                 notes_lines=None):
 
     sample_file = template_path if template_path else r"Template.pro"
     if os.path.isabs(sample_file):
@@ -250,6 +251,14 @@ def gen_pro_data(text_block_names, song_texts, line_count,
             font_size=size, font_color=color,
             font_style=style, font_family=family,
             all_caps=element_all_caps(element)
+        )
+
+    # Inject notes into intro slide (if provided)
+    if notes_lines:
+        intro_ps = presentation_obj.cues[TEMPLATE].actions[0].slide.presentation
+        intro_ps.notes.rtf_data = inject_text_into_rtf(
+            intro_ps.notes.rtf_data, notes_lines,
+            all_caps=intro_ps.notes.attributes.capitalization == intro_ps.notes.attributes.DESCRIPTOR.fields_by_name["capitalization"].enum_type.values_by_name["CAPITALIZATION_ALL_CAPS"].number
         )
 
     # Fix intro cue UUIDs
@@ -302,6 +311,14 @@ def gen_pro_data(text_block_names, song_texts, line_count,
                 all_caps=element_all_caps(element)
             )
 
+            # Inject notes into this slide (if provided)
+            if notes_lines:
+                slide_ps = new_cue.actions[0].slide.presentation
+                slide_ps.notes.rtf_data = inject_text_into_rtf(
+                    slide_ps.notes.rtf_data, notes_lines,
+                    all_caps=slide_ps.notes.attributes.capitalization == slide_ps.notes.attributes.DESCRIPTOR.fields_by_name["capitalization"].enum_type.values_by_name["CAPITALIZATION_ALL_CAPS"].number
+                )
+
     # Add Interlude & Ending once
     for extra in ["Interlude", "Ending"]:
         slide_uuid = make_uuid()
@@ -329,6 +346,13 @@ def gen_pro_data(text_block_names, song_texts, line_count,
                 all_caps=element_all_caps(element)
             )
 
+        if notes_lines:
+            extra_ps = new_cue.actions[0].slide.presentation
+            extra_ps.notes.rtf_data = inject_text_into_rtf(
+                extra_ps.notes.rtf_data, notes_lines,
+                all_caps=extra_ps.notes.attributes.capitalization == extra_ps.notes.attributes.DESCRIPTOR.fields_by_name["capitalization"].enum_type.values_by_name["CAPITALIZATION_ALL_CAPS"].number
+            )
+
     if arrangement_order:
         group_uuids = {}
         for cg in presentation_obj.cue_groups:
@@ -350,7 +374,7 @@ def gen_pro_data(text_block_names, song_texts, line_count,
 # ---------------------------------------------------------
 #  SAVE SONG
 # ---------------------------------------------------------
-def save_song(text_block_names, song_texts, line_count, output_filename, font_data=None, arrangement_order=None, template_path=None):
+def save_song(text_block_names, song_texts, line_count, output_filename, font_data=None, arrangement_order=None, template_path=None, notes_lines=None):
 
     with open(output_filename + ".json", "w", encoding="utf-8") as f:
         json.dump(song_texts, f, ensure_ascii=False, indent=2)
@@ -380,7 +404,8 @@ def save_song(text_block_names, song_texts, line_count, output_filename, font_da
             per_block_sizes=sizes,
             per_block_families=families,
             arrangement_order=arrangement_order,
-            template_path=template_path
+            template_path=template_path,
+            notes_lines=notes_lines
         ))
 
 

@@ -5,7 +5,7 @@ from SongEditorPro7Generic import gen_pro_data
 
 
 def gen_single_pro(block_name, song_texts, line_count, arrangement_order=None,
-                    remove_other_blocks=True, template_path=None):
+                    remove_other_blocks=True, template_path=None, notes_lines=None):
     """Generate a .pro containing only `block_name`'s text block.
 
     Reuses the standard generator, then (optionally) prunes every text
@@ -16,6 +16,7 @@ def gen_single_pro(block_name, song_texts, line_count, arrangement_order=None,
         [block_name], song_texts, line_count,
         arrangement_order=arrangement_order,
         template_path=template_path,
+        notes_lines=notes_lines,
     )
 
     if not remove_other_blocks:
@@ -36,7 +37,7 @@ def gen_single_pro(block_name, song_texts, line_count, arrangement_order=None,
 
 
 def save_single(block_name, song_texts, line_count, output_filename,
-                arrangement_order=None, template_path=None):
+                arrangement_order=None, template_path=None, notes_lines=None):
     """Write `<output_filename>.json` and `<output_filename>.pro` using only
     the single `block_name` text block."""
     with open(output_filename + ".json", "w", encoding="utf-8") as f:
@@ -47,4 +48,5 @@ def save_single(block_name, song_texts, line_count, output_filename,
             block_name, song_texts, line_count,
             arrangement_order=arrangement_order,
             template_path=template_path,
+            notes_lines=notes_lines,
         ))
