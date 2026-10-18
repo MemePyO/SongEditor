@@ -358,6 +358,37 @@ class SongEditorApp(TkinterDnD.Tk):
 
         tb.Button(win, text="Apply", bootstyle="success", command=apply).pack(pady=10)
 
+    def import_chordpro(self):
+        path = filedialog.askopenfilename(
+            initialdir=self.output_dir,
+            filetypes=[("ChordPro", "*.cho *.chordpro *.txt"), ("All", "*.*")],
+            title="Import ChordPro")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+        except Exception as e:
+            self.show_message("Error reading file: " + str(e))
+            return
+        from chordpro import parse_chordpro
+        sections = parse_chordpro(text)
+        # Build a combined text for the primary block with group labels
+        lines = []
+        for label, lyrics in sections.items():
+            lines.append(label)
+            lines.extend(lyrics)
+        if self.text_block_names:
+            primary = self.text_block_names[0]
+            widget = self.text_widgets.get(primary)
+            if widget:
+                widget.delete("1.0", tk.END)
+                widget.insert("1.0", "\n".join(lines))
+        title = os.path.splitext(os.path.basename(path))[0]
+        self.song_title.set(title)
+        self.show_message("Imported ChordPro: " + os.path.basename(path)
+                          + " (" + str(len(sections)) + " sections)")
+
     def load_template(self):
         path = filedialog.askopenfilename(
             initialdir=self.output_dir,
@@ -425,6 +456,7 @@ class SongEditorApp(TkinterDnD.Tk):
         self.font_slider.grid(row=2, column=1, columnspan=7, padx=5, pady=(5,0), sticky="ew")
 
         tb.Button(header, text="Open", bootstyle="primary-outline", command=self.open_file).grid(row=0, column=5, padx=10)
+        tb.Button(header, text="Import ChordPro", bootstyle="secondary-outline", command=self.import_chordpro).grid(row=0, column=6, padx=5)
         tb.Button(header, text="Save", bootstyle="success-outline", command=self.save_song_action).grid(row=0, column=6)
         tb.Button(header, text="Check Typos", bootstyle="danger-outline", command=self.check_typos_action).grid(row=0, column=7, padx=10)
         self.theme_btn = tb.Button(header, text="Light Mode", bootstyle="secondary-outline", command=self.toggle_theme)
