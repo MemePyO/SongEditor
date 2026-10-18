@@ -160,11 +160,19 @@ def escape_cocoa_rtf(text):
     return "".join(out)
 
 
-def inject_text_into_rtf(template_rtf_bytes, new_text_lines, font_size=None, font_color=None, font_style=None, font_family=None):
+def element_all_caps(element):
+    attrs = element.element.text.attributes
+    field = attrs.DESCRIPTOR.fields_by_name["capitalization"]
+    return attrs.capitalization == field.enum_type.values_by_name["CAPITALIZATION_ALL_CAPS"].number
+
+
+def inject_text_into_rtf(template_rtf_bytes, new_text_lines, font_size=None, font_color=None, font_style=None, font_family=None, all_caps=False):
     """
     Preserves ProPresenter 7's RTF structure, style, font,
     and alignment intact from Template.pro, replacing only the inner text.
     font_size/font_color/font_style/font_family are reserved for future overrides.
+    When all_caps is set, \\caps is re-emitted after each \\par so character
+    formatting survives ProPresenter's per-paragraph RTF reset.
     """
     if not template_rtf_bytes:
         return b""
@@ -182,14 +190,16 @@ def inject_text_into_rtf(template_rtf_bytes, new_text_lines, font_size=None, fon
     prefix = template_rtf_bytes[:prefix_end]
 
     # Keep RTF wrapper/formatting, strip actual content (Intro, Interlude, Ending)
-    clean_lines = [escape_cocoa_rtf(line.strip()) for line in new_text_lines if line.strip()]
+    clean_lines = [escape_cocoa_rtf(line.strip().upper() if all_caps else line.strip())
+                   for line in new_text_lines if line.strip()]
     if not clean_lines:
         return prefix + b"}"
 
     # Append lines joined by RTF paragraph breaks, then close.
     # If the prefix ends with a letter or digit (a control word such as \cb2),
     # a space delimiter is required so the first word is not parsed as part of it.
-    joined_text = r"\par ".join(clean_lines).encode("ascii")
+    separator = r"\caps \par " if all_caps else r"\par "
+    joined_text = separator.join(clean_lines).encode("ascii")
     if prefix and (0x30 <= prefix[-1] <= 0x39 or 0x41 <= prefix[-1] <= 0x5A or 0x61 <= prefix[-1] <= 0x7A):
         prefix = prefix + b" "
     return prefix + joined_text + b"}"
@@ -233,7 +243,8 @@ def gen_pro_data(text_block_names, song_texts, line_count,
         element.element.text.rtf_data = inject_text_into_rtf(
             template_rtf, [],
             font_size=size, font_color=color,
-            font_style=style, font_family=family
+            font_style=style, font_family=family,
+            all_caps=element_all_caps(element)
         )
 
     # Fix intro cue UUIDs
@@ -282,7 +293,8 @@ def gen_pro_data(text_block_names, song_texts, line_count,
             element.element.text.rtf_data = inject_text_into_rtf(
                 template_rtf, lines,
                 font_size=size, font_color=color,
-                font_style=style, font_family=family
+                font_style=style, font_family=family,
+                all_caps=element_all_caps(element)
             )
 
     # Add Interlude & Ending once
@@ -308,7 +320,8 @@ def gen_pro_data(text_block_names, song_texts, line_count,
             element.element.text.rtf_data = inject_text_into_rtf(
                 template_rtf, [],
                 font_size=size, font_color=color,
-                font_style=style, font_family=family
+                font_style=style, font_family=family,
+                all_caps=element_all_caps(element)
             )
 
     if arrangement_order:

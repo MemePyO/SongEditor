@@ -138,7 +138,7 @@ class TestSingleExport:
         rtfs = [el.element.text.rtf_data
                 for cue in p.cues for action in cue.actions
                 for el in action.slide.presentation.base_slide.elements]
-        assert any(b"hello world" in rtf for rtf in rtfs)
+        assert any(b"hello world" in rtf.lower() for rtf in rtfs)
 
     def test_groups_generated(self):
         texts = {"Romana": ["Verse 1", "hello world", "Chorus", "la la la"]}
