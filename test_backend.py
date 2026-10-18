@@ -1,8 +1,11 @@
+import os
+
 import pytest
 from SongEditorPro7Generic import escape_cocoa_rtf, rtf_text_start, inject_text_into_rtf, split_slides
 from autocorrect import find_typos
 import presentation_pb2
 from single_export import gen_single_pro
+from melodii import save_json_to_melodii, load_json_from_melodii, saved_song_names, find_saved_song
 
 
 class TestEscapeCocoaRtf:
@@ -148,3 +151,31 @@ class TestSingleExport:
         group_names = {cg.group.name for cg in p.cue_groups}
         assert "Verse 1" in group_names
         assert "Chorus" in group_names
+
+
+class TestMelodii:
+    def _seed(self, directory):
+        save_json_to_melodii("Amazing Grace", {"Romana": ["Verse 1", "linie"]}, directory)
+        save_json_to_melodii("How Great", {"Romana": ["line"]}, directory)
+        save_json_to_melodii("Amazing Grace (Single)", {"Romana": ["single"]}, directory)
+
+    def test_round_trip(self, tmp_path):
+        texts = {"Romana": ["Verse 1", "salvata"], "Engleza": ["Verse 1", "saved"]}
+        path = save_json_to_melodii("Melodie", texts, tmp_path)
+        assert os.path.exists(path)
+        assert load_json_from_melodii("Melodie", tmp_path) == texts
+
+    def test_saved_song_names_excludes_single(self, tmp_path):
+        self._seed(tmp_path)
+        assert saved_song_names(tmp_path) == ["Amazing Grace", "How Great"]
+
+    def test_saved_song_names_include_single(self, tmp_path):
+        self._seed(tmp_path)
+        assert saved_song_names(tmp_path, include_single=True) == [
+            "Amazing Grace", "Amazing Grace (Single)", "How Great"]
+
+    def test_find_saved_song_exact_and_case_insensitive(self, tmp_path):
+        self._seed(tmp_path)
+        assert find_saved_song("How Great", tmp_path) == "How Great"
+        assert find_saved_song("how great", tmp_path) == "How Great"
+        assert find_saved_song("Missing", tmp_path) is None

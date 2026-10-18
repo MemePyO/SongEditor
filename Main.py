@@ -13,6 +13,7 @@ import threading
 import re
 from SongEditorPro7Generic import save_song, get_text_block_names
 from single_export import save_single
+from melodii import saved_song_names, save_json_to_melodii, load_json_from_melodii, find_saved_song
 from autocorrect import find_typos, get_spellchecker
 from tkinterdnd2 import DND_FILES, TkinterDnD
 import pymupdf as fitz
@@ -286,32 +287,36 @@ class SongEditorApp(TkinterDnD.Tk):
         # Header (modern card)
         header = tb.Frame(self, padding=10)
         header.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
-        header.grid_columnconfigure(2, weight=1)
+        header.grid_columnconfigure(3, weight=1)
 
         self.make_label(header, "Song Name:").grid(row=0, column=0, sticky="w")
-        self.song_title = tb.Entry(header, width=40, bootstyle="info")
+        self.song_title = tb.Combobox(header, width=34, bootstyle="info")
         self.song_title.grid(row=0, column=1, padx=5)
+        self.song_title.configure(postcommand=self.refresh_song_autocomplete)
         self.bind_unicode_fix(self.song_title)
+        self.refresh_song_autocomplete()
 
-        self.make_label(header, "Lines per Slide:").grid(row=0, column=2, sticky="e")
+        tb.Button(header, text="Import", bootstyle="info-outline", command=self.import_from_melodii_action).grid(row=0, column=2, padx=5)
+
+        self.make_label(header, "Lines per Slide:").grid(row=0, column=3, sticky="e")
         self.line_count = tb.Entry(header, width=5, bootstyle="info")
         self.line_count.insert(0, "2")
-        self.line_count.grid(row=0, column=3, padx=5)
+        self.line_count.grid(row=0, column=4, padx=5)
         self.bind_unicode_fix(self.line_count)
 
         self.make_label(header, "Arrangement:").grid(row=1, column=0, sticky="w", pady=(5,0))
         self.arrangement_order = tb.Entry(header, width=80, bootstyle="info")
         self.arrangement_order.insert(0, "Verse 1, Chorus, Verse 2, Chorus, Bridge, Chorus")
-        self.arrangement_order.grid(row=1, column=1, columnspan=5, padx=5, pady=(5,0), sticky="ew")
+        self.arrangement_order.grid(row=1, column=1, columnspan=6, padx=5, pady=(5,0), sticky="ew")
         self.bind_unicode_fix(self.arrangement_order)
 
         self.make_label(header, "Font Size:").grid(row=2, column=0, sticky="w", pady=(5,0))
         self.font_slider = tb.Scale(header, from_=10, to=24, value=self.current_font_size, command=self.on_font_slider_change, bootstyle="info")
-        self.font_slider.grid(row=2, column=1, columnspan=6, padx=5, pady=(5,0), sticky="ew")
+        self.font_slider.grid(row=2, column=1, columnspan=7, padx=5, pady=(5,0), sticky="ew")
 
-        tb.Button(header, text="Open", bootstyle="primary-outline", command=self.open_file).grid(row=0, column=4, padx=10)
-        tb.Button(header, text="Save", bootstyle="success-outline", command=self.save_song_action).grid(row=0, column=5)
-        tb.Button(header, text="Check Typos", bootstyle="danger-outline", command=self.check_typos_action).grid(row=0, column=6, padx=10)
+        tb.Button(header, text="Open", bootstyle="primary-outline", command=self.open_file).grid(row=0, column=5, padx=10)
+        tb.Button(header, text="Save", bootstyle="success-outline", command=self.save_song_action).grid(row=0, column=6)
+        tb.Button(header, text="Check Typos", bootstyle="danger-outline", command=self.check_typos_action).grid(row=0, column=7, padx=10)
         self.theme_btn = tb.Button(header, text="Light Mode", bootstyle="secondary-outline", command=self.toggle_theme)
         self.theme_btn.grid(row=1, column=7, padx=10, pady=(5,0), sticky="e")
 
@@ -587,27 +592,54 @@ class SongEditorApp(TkinterDnD.Tk):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-
-            for name in self.text_block_names:
-                self.text_widgets[name].delete("1.0", tk.END)
-                self.text_widgets[name].insert("1.0", "\n".join(data.get(name, [])))
-
-            max_len = max(len(data.get(name, [])) for name in self.text_block_names)
-            self.number_widget.delete("1.0", tk.END)
-            self.number_widget.insert("1.0", "\n".join(str(i+1) for i in range(max_len)))
-
-            self.song_title.delete(0, tk.END)
-            self.song_title.insert(0, os.path.basename(path).replace(".json", ""))
-
-            self._syncing_single = True
-            self._set_text(self.single_text, self.text_widgets[self.text_block_names[0]].get("1.0", tk.END))
-            self._syncing_single = False
-            self.update_single_number_widget()
-
-            self.show_message(f"Opened: {path}")
         except Exception as e:
             self.show_message("Error opening file: " + str(e))
             log_error("Failed to open file")
+            return
+
+        self.song_title.set(os.path.basename(path).replace(".json", ""))
+        self.load_json_data(data, f"Opened: {path}")
+
+    def load_json_data(self, data, label=""):
+        for name in self.text_block_names:
+            self.text_widgets[name].delete("1.0", tk.END)
+            self.text_widgets[name].insert("1.0", "\n".join(data.get(name, [])))
+
+        max_len = max(len(data.get(name, [])) for name in self.text_block_names)
+        self.number_widget.delete("1.0", tk.END)
+        self.number_widget.insert("1.0", "\n".join(str(i+1) for i in range(max_len)))
+
+        self._syncing_single = True
+        self._set_text(self.single_text, self.text_widgets[self.text_block_names[0]].get("1.0", tk.END))
+        self._syncing_single = False
+        self.update_single_number_widget()
+
+        if label:
+            self.show_message(label)
+
+    def refresh_song_autocomplete(self):
+        self.song_title["values"] = saved_song_names()
+
+    def import_from_melodii_action(self):
+        title = self.song_title.get().strip()
+        if not title:
+            self.show_message("Type a song name to import.")
+            return
+
+        found = find_saved_song(title)
+        if not found:
+            self.show_message(f"No saved song named '{title}' in Melodii.")
+            return
+
+        try:
+            data = load_json_from_melodii(found)
+        except (OSError, ValueError) as e:
+            self.show_message("Import failed: " + str(e))
+            log_error("Failed to import from Melodii")
+            return
+
+        self.song_title.set(found)
+        self.load_json_data(data, f"Imported: {found}")
 
     # ---------------------------------------------------------
     # SAVE SONG
@@ -679,6 +711,8 @@ class SongEditorApp(TkinterDnD.Tk):
 
         try:
             save_song(self.text_block_names, song_texts, max_lines, output_file, arrangement_order=self.arrangement_order.get().strip())
+            save_json_to_melodii(title, song_texts)
+            self.refresh_song_autocomplete()
             self.show_message(f"Saved! Import in ProPresenter: File → Import → {output_file}.pro")
         except Exception as e:
             self.show_message("Save failed: " + str(e))
