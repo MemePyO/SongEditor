@@ -118,7 +118,7 @@ class SongEditorApp(TkinterDnD.Tk):
         self.geometry("1300x850")
 
         self.text_block_names = text_block_names
-        self.output_dir = output_dir
+        self.output_dir = self.app_config.get("output_dir") or output_dir
         self.text_widgets = {}
         self._syncing_single = False
         self._preview_refresh_job = None
@@ -205,14 +205,11 @@ class SongEditorApp(TkinterDnD.Tk):
         first = self.text_block_names[0]
         second = self.text_block_names[1] if len(self.text_block_names) > 1 else None
         if target_name and target_name in self.text_widgets:
-            self.text_widgets[target_name].delete("1.0", tk.END)
-            self.text_widgets[target_name].insert("1.0", ro_text)
+            self._set_text(self.text_widgets[target_name], ro_text)
         else:
-            self.text_widgets[first].delete("1.0", tk.END)
-            self.text_widgets[first].insert("1.0", ro_text)
+            self._set_text(self.text_widgets[first], ro_text)
             if second and second in self.text_widgets:
-                self.text_widgets[second].delete("1.0", tk.END)
-                self.text_widgets[second].insert("1.0", en_text)
+                self._set_text(self.text_widgets[second], en_text)
         self._syncing_single = True
         self._set_text(self.single_text, ro_text)
         self._syncing_single = False
@@ -228,6 +225,16 @@ class SongEditorApp(TkinterDnD.Tk):
 
     def bind_unicode_fix(self, widget):
         widget.bind("<KeyPress>", on_key_press)
+
+    def bind_text_shortcuts(self, widget):
+        widget.bind("<Control-a>", self._select_all_text)
+        widget.bind("<Control-A>", self._select_all_text)
+
+    def _select_all_text(self, event):
+        event.widget.tag_add("sel", "1.0", "end-1c")
+        event.widget.mark_set("insert", "1.0")
+        event.widget.see("insert")
+        return "break"
 
     def make_label(self, parent, text, **kwargs):
         return tb.Label(parent, text=text, font=self.label_font, **kwargs)
@@ -290,6 +297,16 @@ class SongEditorApp(TkinterDnD.Tk):
             self.apply_theme_colors(light=False)
         save_config(self.app_config)
 
+    def choose_output_folder(self):
+        path = filedialog.askdirectory(initialdir=self.output_dir,
+                                       title="Select output folder")
+        if not path:
+            return
+        self.output_dir = path
+        self.app_config["output_dir"] = path
+        save_config(self.app_config)
+        self.show_message("Output folder: " + path)
+
     # ---------------------------------------------------------
     def edit_arrangement(self):
         win = tb.Toplevel(self)
@@ -297,18 +314,10 @@ class SongEditorApp(TkinterDnD.Tk):
         win.geometry("420x420")
         win.transient(self)
 
-        groups = []
-        for g in self.text_block_names:
-            pass
-        # collect unique group names from GroupNames.txt
-        try:
-            with open(resource_path("GroupNames.txt"), "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line and line not in groups:
-                        groups.append(line)
-        except Exception:
-            groups = ["Verse 1", "Chorus", "Bridge"]
+        groups = self.song_labels()
+        if not groups:
+            # No section labels in the song yet - offer the known group names.
+            groups = self.get_known_labels() or ["Verse 1", "Chorus", "Bridge"]
 
         # parse current arrangement
         current = [x.strip() for x in self.arrangement_order.get().split(",") if x.strip()]
@@ -428,6 +437,7 @@ class SongEditorApp(TkinterDnD.Tk):
         tb.Button(header, text="Open", bootstyle="primary-outline", command=self.open_file).grid(row=0, column=7, padx=5)
         tb.Button(header, text="Save", bootstyle="success-outline", command=self.save_song_action).grid(row=0, column=8, padx=5)
         tb.Button(header, text="Check Typos", bootstyle="danger-outline", command=self.check_typos_action).grid(row=0, column=9, padx=5)
+        tb.Button(header, text="New", bootstyle="secondary-outline", command=self.new_song).grid(row=0, column=10, padx=5)
 
         self.make_label(header, "Arrangement:").grid(row=1, column=0, sticky="w", pady=(5,0))
         self.arrangement_order = tb.Entry(header, width=80, bootstyle="info")
@@ -438,6 +448,10 @@ class SongEditorApp(TkinterDnD.Tk):
 
         self.theme_btn = tb.Button(header, text="Light Mode", bootstyle="secondary-outline", command=self.toggle_theme)
         self.theme_btn.grid(row=1, column=9, padx=5, pady=(5,0), sticky="e")
+
+        tb.Button(header, text="Output Folder", bootstyle="secondary-outline",
+                  command=self.choose_output_folder).grid(
+            row=1, column=10, padx=5, pady=(5,0), sticky="e")
 
         self.make_label(header, "Font Size:").grid(row=2, column=0, sticky="w", pady=(5,0))
         self.font_slider = tb.Scale(header, from_=10, to=24, value=self.current_font_size, command=self.on_font_slider_change, bootstyle="info")
@@ -516,10 +530,12 @@ class SongEditorApp(TkinterDnD.Tk):
             self.make_label(frame, name).pack()
 
             text_widget = tk.Text(frame, wrap=tk.WORD, bg=DARK_SURFACE, fg=DARK_FG,
+                                  undo=True, autoseparators=True, maxundo=-1,
                                   yscrollcommand=self.scrollbar.set)
             text_widget.pack(expand=True, fill=tk.BOTH)
 
             self.bind_unicode_fix(text_widget)
+            self.bind_text_shortcuts(text_widget)
             self.text_widgets[name] = text_widget
             text_widget.bind("<Motion>", self.on_hover)
             text_widget.bind("<KeyRelease>", self.update_number_widget)
@@ -590,9 +606,11 @@ class SongEditorApp(TkinterDnD.Tk):
         self.make_label(single_text_frame, self.text_block_names[0]).pack()
         self.single_text = tk.Text(single_text_frame, wrap=tk.WORD,
                                    bg=DARK_SURFACE, fg=DARK_FG,
+                                   undo=True, autoseparators=True, maxundo=-1,
                                    yscrollcommand=self.single_scrollbar.set)
         self.single_text.pack(expand=True, fill=tk.BOTH)
         self.bind_unicode_fix(self.single_text)
+        self.bind_text_shortcuts(self.single_text)
 
         # Download button
         tb.Button(self.single_tab, text="Download as Single",
@@ -638,6 +656,10 @@ class SongEditorApp(TkinterDnD.Tk):
         widget.delete("1.0", tk.END)
         widget.insert("1.0", content)
         widget.edit_modified(False)
+        try:
+            widget.edit_reset()
+        except tk.TclError:
+            pass
 
     def _mirror_single_to_compare(self, event=None):
         if self._syncing_single:
@@ -780,9 +802,11 @@ class SongEditorApp(TkinterDnD.Tk):
 
         self.make_label(self.groupnames_tab, "Edit GroupNames.txt:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
 
-        self.groupnames_text = tk.Text(self.groupnames_tab, wrap=tk.WORD, bg=DARK_SURFACE, fg=DARK_FG)
+        self.groupnames_text = tk.Text(self.groupnames_tab, wrap=tk.WORD, bg=DARK_SURFACE, fg=DARK_FG,
+                                       undo=True, autoseparators=True, maxundo=-1)
         self.groupnames_text.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
         self.bind_unicode_fix(self.groupnames_text)
+        self.bind_text_shortcuts(self.groupnames_text)
         self.groupnames_text.bind("<MouseWheel>", self._sync_all_scroll)
 
         tb.Button(self.groupnames_tab, text="Save Changes", bootstyle="success-outline", command=self.save_groupnames).grid(row=2, column=0, pady=10)
@@ -843,8 +867,7 @@ class SongEditorApp(TkinterDnD.Tk):
 
     def load_json_data(self, data, label=""):
         for name in self.text_block_names:
-            self.text_widgets[name].delete("1.0", tk.END)
-            self.text_widgets[name].insert("1.0", "\n".join(data.get(name, [])))
+            self._set_text(self.text_widgets[name], "\n".join(data.get(name, [])))
 
         max_len = max(len(data.get(name, [])) for name in self.text_block_names)
         self.number_widget.delete("1.0", tk.END)
@@ -883,6 +906,23 @@ class SongEditorApp(TkinterDnD.Tk):
         self.song_title.set(found)
         self.load_json_data(data, f"Imported: {found}")
 
+    def new_song(self):
+        if not tb.dialogs.Messagebox.yesno(
+                "Clear the current song and start a new one?", "New Song"):
+            return
+        for name in self.text_block_names:
+            self._set_text(self.text_widgets[name], "")
+        self._syncing_single = True
+        self._set_text(self.single_text, "")
+        self._syncing_single = False
+        self.song_title.set("")
+        self.update_number_widget()
+        self.update_single_number_widget()
+        self.arrangement_order.delete(0, tk.END)
+        self.arrangement_order.insert(0, "Verse 1, Chorus, Verse 2, Chorus, Bridge, Chorus")
+        self.show_message("Started a new song.")
+        self._schedule_preview_refresh()
+
     # ---------------------------------------------------------
     # SAVE SONG
     # ---------------------------------------------------------
@@ -904,6 +944,18 @@ class SongEditorApp(TkinterDnD.Tk):
             return labels
         except Exception:
             return []
+
+    def song_labels(self):
+        """Known section labels that actually appear in the primary text block."""
+        known = set(self.get_known_labels())
+        first = self.text_block_names[0]
+        lines = self.text_widgets[first].get("1.0", tk.END).splitlines()
+        seen = []
+        for line in lines:
+            s = line.strip()
+            if s in known and s not in seen:
+                seen.append(s)
+        return seen
 
     def collect_song_texts(self):
         return {name: self.text_widgets[name].get("1.0", tk.END).splitlines()
