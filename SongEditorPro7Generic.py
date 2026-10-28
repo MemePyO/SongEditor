@@ -424,5 +424,20 @@ def get_text_block_names(template_path=None):
     return [el.element.name for el in presentation_obj.cues[-1].actions[0].slide.presentation.base_slide.elements]
 
 
+def resolve_template(configured_path=None):
+    """Return (template_path, text_block_names, used_fallback).
+
+    Tries the configured template first. If it is missing/unreadable/invalid,
+    falls back to the bundled ``Template.pro`` (template_path becomes None) and
+    sets ``used_fallback`` so callers can surface a friendly message.
+    """
+    if configured_path:
+        try:
+            return configured_path, get_text_block_names(configured_path), False
+        except Exception:
+            pass
+    return None, get_text_block_names(None), bool(configured_path)
+
+
 if __name__ == "__main__":
     print(get_text_block_names())

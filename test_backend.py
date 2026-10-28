@@ -1,7 +1,7 @@
 import os
 
 import pytest
-from SongEditorPro7Generic import escape_cocoa_rtf, rtf_text_start, inject_text_into_rtf, split_slides
+from SongEditorPro7Generic import escape_cocoa_rtf, rtf_text_start, inject_text_into_rtf, split_slides, resolve_template
 from autocorrect import find_typos
 import presentation_pb2
 from single_export import gen_single_pro
@@ -105,6 +105,20 @@ class TestSplitSlides:
             assert "Verse 1" not in slide["Romana"]
             assert "Chorus" not in slide["Romana"]
 
+
+class TestResolveTemplate:
+    def test_configured_template_used(self):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Template.pro")
+        resolved, names, used_fallback = resolve_template(path)
+        assert resolved == path
+        assert used_fallback is False
+        assert names
+
+    def test_missing_template_falls_back_to_bundled(self):
+        resolved, names, used_fallback = resolve_template("C:/definitely/not/here.pro")
+        assert resolved is None
+        assert used_fallback is True
+        assert names
 
 
 class TestFindTypos:

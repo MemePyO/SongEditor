@@ -11,7 +11,7 @@ import json
 import logging
 import threading
 import re
-from SongEditorPro7Generic import save_song, get_text_block_names, split_slides
+from SongEditorPro7Generic import save_song, get_text_block_names, split_slides, resolve_template
 from single_export import save_single
 from melodii import saved_song_names, save_json_to_melodii, load_json_from_melodii, find_saved_song
 from autocorrect import find_typos, get_spellchecker
@@ -35,6 +35,9 @@ LIGHT_FG = "#0a2410"       # dark green, high contrast text
 # --- Error Logging ---
 LOG_DIR = "logs"
 LOG_FILE = os.path.join(LOG_DIR, "app.log")
+
+# Sentinel: distinguishes "caller did not specify a template" from "use bundled".
+_UNSET = object()
 
 def setup_logging():
     if not os.path.exists(LOG_DIR):
@@ -96,7 +99,7 @@ def save_config(config):
 
 
 class SongEditorApp(TkinterDnD.Tk):
-    def __init__(self, text_block_names, output_dir):
+    def __init__(self, text_block_names, output_dir, template_path=_UNSET):
         self.app_config = load_config()
         self.current_font_size = self.app_config.get("font_size", 11)
         default_theme = self.app_config.get("theme", DARK_THEME)
@@ -119,7 +122,10 @@ class SongEditorApp(TkinterDnD.Tk):
         self.text_widgets = {}
         self._syncing_single = False
         self._preview_refresh_job = None
-        self.template_path = self.app_config.get("template_path", None)
+        if template_path is _UNSET:
+            self.template_path = self.app_config.get("template_path", None)
+        else:
+            self.template_path = template_path
 
         self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -362,37 +368,6 @@ class SongEditorApp(TkinterDnD.Tk):
 
         tb.Button(win, text="Apply", bootstyle="success", command=apply).pack(pady=10)
 
-    def import_chordpro(self):
-        path = filedialog.askopenfilename(
-            initialdir=self.output_dir,
-            filetypes=[("ChordPro", "*.cho *.chordpro *.txt"), ("All", "*.*")],
-            title="Import ChordPro")
-        if not path:
-            return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                text = f.read()
-        except Exception as e:
-            self.show_message("Error reading file: " + str(e))
-            return
-        from chordpro import parse_chordpro
-        sections = parse_chordpro(text)
-        # Build a combined text for the primary block with group labels
-        lines = []
-        for label, lyrics in sections.items():
-            lines.append(label)
-            lines.extend(lyrics)
-        if self.text_block_names:
-            primary = self.text_block_names[0]
-            widget = self.text_widgets.get(primary)
-            if widget:
-                widget.delete("1.0", tk.END)
-                widget.insert("1.0", "\n".join(lines))
-        title = os.path.splitext(os.path.basename(path))[0]
-        self.song_title.set(title)
-        self.show_message("Imported ChordPro: " + os.path.basename(path)
-                          + " (" + str(len(sections)) + " sections)")
-
     def load_template(self):
         path = filedialog.askopenfilename(
             initialdir=self.output_dir,
@@ -451,9 +426,8 @@ class SongEditorApp(TkinterDnD.Tk):
         self.line_count.bind("<FocusOut>", self._schedule_preview_refresh)
 
         tb.Button(header, text="Open", bootstyle="primary-outline", command=self.open_file).grid(row=0, column=7, padx=5)
-        tb.Button(header, text="Import ChordPro", bootstyle="secondary-outline", command=self.import_chordpro).grid(row=0, column=8, padx=5)
-        tb.Button(header, text="Save", bootstyle="success-outline", command=self.save_song_action).grid(row=0, column=9, padx=5)
-        tb.Button(header, text="Check Typos", bootstyle="danger-outline", command=self.check_typos_action).grid(row=0, column=10, padx=5)
+        tb.Button(header, text="Save", bootstyle="success-outline", command=self.save_song_action).grid(row=0, column=8, padx=5)
+        tb.Button(header, text="Check Typos", bootstyle="danger-outline", command=self.check_typos_action).grid(row=0, column=9, padx=5)
 
         self.make_label(header, "Arrangement:").grid(row=1, column=0, sticky="w", pady=(5,0))
         self.arrangement_order = tb.Entry(header, width=80, bootstyle="info")
@@ -463,7 +437,7 @@ class SongEditorApp(TkinterDnD.Tk):
         tb.Button(header, text="Edit Arrangement", bootstyle="secondary-outline", command=self.edit_arrangement).grid(row=1, column=5, columnspan=2, padx=5, pady=(5,0))
 
         self.theme_btn = tb.Button(header, text="Light Mode", bootstyle="secondary-outline", command=self.toggle_theme)
-        self.theme_btn.grid(row=1, column=10, padx=5, pady=(5,0), sticky="e")
+        self.theme_btn.grid(row=1, column=9, padx=5, pady=(5,0), sticky="e")
 
         self.make_label(header, "Font Size:").grid(row=2, column=0, sticky="w", pady=(5,0))
         self.font_slider = tb.Scale(header, from_=10, to=24, value=self.current_font_size, command=self.on_font_slider_change, bootstyle="info")
@@ -1065,12 +1039,21 @@ if __name__ == "__main__":
     logging.info("Application started")
 
     try:
-        template_path = load_config().get("template_path", None)
-        text_block_names = get_text_block_names(template_path)
+        configured_template = load_config().get("template_path", None)
+        template_path, text_block_names, used_fallback = resolve_template(configured_template)
+        if used_fallback:
+            logging.warning(
+                "Configured template unusable (%s); using bundled Template.pro",
+                configured_template)
         logging.info(f"Text block names: {text_block_names} (template: {template_path})")
         output_dir = get_download_path()
         logging.info(f"Output directory: {output_dir}")
-        app = SongEditorApp(text_block_names, output_dir)
+        app = SongEditorApp(text_block_names, output_dir, template_path=template_path)
+
+        if used_fallback:
+            app.show_message(
+                "Configured template was not found or is invalid - using the bundled "
+                "Template.pro. Use 'Load Template' to choose another one.")
 
         default_font = nametofont("TkDefaultFont")
         default_font.configure(family="Segoe UI", size=app.current_font_size)
