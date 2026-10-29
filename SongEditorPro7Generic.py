@@ -29,25 +29,70 @@ def add_que_group(presentation_obj, slide_label, slide_uuid):
 
 
 # ---------------------------------------------------------
+#  GROUP LABELS
+# ---------------------------------------------------------
+_labels_cache = {}
+
+
+def expand_group_labels(raw_lines):
+    """Expand ``Name 1..N`` ranges from GroupNames.txt into individual labels."""
+    labels = []
+    for raw in raw_lines:
+        lbl = (raw or "").strip()
+        if not lbl:
+            continue
+        if ".." in lbl:
+            name, _, rng = lbl.rpartition(" ")
+            try:
+                start, end = (int(part) for part in rng.split(".."))
+            except (TypeError, ValueError):
+                labels.append(lbl)
+                continue
+            if not name:
+                labels.append(lbl)
+                continue
+            labels.extend(f"{name} {i}" for i in range(start, end + 1))
+        else:
+            labels.append(lbl)
+    return labels
+
+
+def load_group_labels(path=None, use_cache=True):
+    """Return the expanded section labels, cached by file mtime/size.
+
+    Reading GroupNames.txt on every preview refresh is unnecessary; the cache
+    is invalidated automatically when the file changes on disk.
+    """
+    path = path or resource_path("GroupNames.txt")
+    try:
+        stat = os.stat(path)
+        key = (os.path.abspath(path), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return []
+    if use_cache and key in _labels_cache:
+        return list(_labels_cache[key])
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            labels = expand_group_labels(f.read().splitlines())
+    except OSError:
+        return []
+    _labels_cache.clear()
+    _labels_cache[key] = labels
+    return list(labels)
+
+
+def invalidate_group_labels_cache():
+    _labels_cache.clear()
+
+
+# ---------------------------------------------------------
 #  MERGED SPLITTER — LABELS & GROUPS LIKE OLD SCRIPT,
 #  BUT RETURNS LINES PER BLOCK FOR TEMPLATE-AWARE RTF
 # ---------------------------------------------------------
-def split_slides(text_block_names, song_texts, max_line_count):
-    # Load group labels
-    with open(resource_path("GroupNames.txt"), "r", encoding="utf-8") as f:
-        raw_labels = f.read().splitlines()
-
-    # Expand ranges like "Verse 1..3"
-    labels = []
-    for lbl in raw_labels:
-        if ".." in lbl:
-            name, rng = lbl.split(" ")
-            start, end = map(int, rng.split(".."))
-            for i in range(start, end + 1):
-                labels.append(f"{name} {i}")
-        else:
-            if lbl.strip():
-                labels.append(lbl.strip())
+def split_slides(text_block_names, song_texts, max_line_count, labels=None):
+    # Load group labels (cached) unless the caller already resolved them
+    if labels is None:
+        labels = load_group_labels()
 
     slides = []
     block_len = len(song_texts[text_block_names[0]])

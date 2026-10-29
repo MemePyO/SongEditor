@@ -11,9 +11,11 @@ import json
 import logging
 import threading
 import re
-from SongEditorPro7Generic import save_song, get_text_block_names, split_slides, resolve_template
+from SongEditorPro7Generic import (save_song, get_text_block_names, split_slides,
+                                  resolve_template, load_group_labels,
+                                  invalidate_group_labels_cache)
 from single_export import save_single
-from melodii import saved_song_names, save_json_to_melodii, load_json_from_melodii, find_saved_song
+from melodii import saved_song_names, save_json_to_melodii, load_json_from_melodii
 from autocorrect import find_typos, get_spellchecker
 from tkinterdnd2 import DND_FILES, TkinterDnD
 import pymupdf as fitz
@@ -745,53 +747,124 @@ class SongEditorApp(TkinterDnD.Tk):
                 self.after_cancel(self._preview_refresh_job)
             except Exception:
                 pass
-        self._preview_refresh_job = self.after(400, self.refresh_preview)
+        # Long songs are expensive to re-split; 700ms keeps typing responsive.
+        self._preview_refresh_job = self.after(700, self.refresh_preview)
 
     def refresh_preview(self, event=None):
         self._preview_refresh_job = None
         if not hasattr(self, "preview_inner"):
             return
 
-        for child in self.preview_inner.winfo_children():
-            child.destroy()
-
         song_texts = self.collect_song_texts()
         max_lines = self.parse_max_lines()
         primary_only = self.preview_primary_only.get()
-        names = [self.text_block_names[0]] if primary_only else list(self.text_block_names)
+        names = tuple([self.text_block_names[0]] if primary_only
+                      else list(self.text_block_names))
 
         try:
-            slides = split_slides(self.text_block_names, song_texts, max_lines)
+            labels = self.get_known_labels()
+            slides = split_slides(self.text_block_names, song_texts, max_lines,
+                                  labels=labels)
         except Exception as e:
             self.preview_count_label.config(text="Preview unavailable: " + str(e))
             return
 
         total = len(slides)
-        self.preview_count_label.config(text=f"{total} slide(s)")
+        self.preview_count_label.config(text=self._preview_summary(slides))
+
+        state = getattr(self, "_preview_state", None)
+        if state is None or state["names"] != names:
+            for child in self.preview_inner.winfo_children():
+                child.destroy()
+            state = {"names": names, "cards": [], "empty": None}
+            self._preview_state = state
 
         if total == 0:
-            tb.Label(self.preview_inner, text="No slides yet - add some lyrics.",
-                     bootstyle="secondary").pack(anchor="w", padx=5, pady=5)
+            for entry in state["cards"]:
+                entry["card"].destroy()
+            state["cards"] = []
+            if state["empty"] is None:
+                state["empty"] = self._create_preview_empty()
+            state["empty"].pack(anchor="w", padx=5, pady=5)
+            self.preview_canvas.configure(scrollregion=self.preview_canvas.bbox("all"))
             return
 
-        for idx, slide in enumerate(slides, start=1):
-            label = slide.get("label", "")
-            card = tb.Labelframe(
-                self.preview_inner, text=f"#{idx} / {total}  -  {label}",
-                bootstyle="info", padding=8)
-            card.pack(fill=tk.X, padx=5, pady=4)
-            for col, name in enumerate(names):
-                col_frame = tb.Frame(card)
-                col_frame.grid(row=0, column=col, sticky="nw", padx=(0, 24))
-                tb.Label(col_frame, text=name, font=self.label_font,
-                         bootstyle="info").pack(anchor="w")
-                lines = slide.get(name, [])
-                tb.Label(col_frame, text="\n".join(lines) if lines else " ",
-                         justify=tk.LEFT, bootstyle="secondary",
-                         wraplength=320).pack(anchor="w")
+        if state["empty"] is not None:
+            state["empty"].destroy()
+            state["empty"] = None
+
+        cards = state["cards"]
+        for idx, slide in enumerate(slides):
+            if idx < len(cards):
+                entry = cards[idx]
+                if entry["total"] != total:
+                    entry["card"].config(
+                        text=f"#{idx + 1} / {total}  -  {entry['label']}")
+                    entry["total"] = total
+                if entry["sig"] != self._slide_signature(slide, names):
+                    self._update_preview_card(entry, idx + 1, total, slide, names)
+            else:
+                cards.append(self._create_preview_card(idx + 1, total, slide, names))
+
+        # Drop cards that are no longer needed (song got shorter)
+        while len(cards) > total:
+            cards.pop()["card"].destroy()
 
         self.preview_inner.update_idletasks()
         self.preview_canvas.configure(scrollregion=self.preview_canvas.bbox("all"))
+
+    def _slide_signature(self, slide, names):
+        return (slide.get("label", ""),
+                tuple((name, tuple(slide.get(name, []))) for name in names))
+
+    def _preview_summary(self, slides):
+        total = len(slides)
+        if total == 0:
+            return "0 slide(s)"
+        counts = {}
+        for slide in slides:
+            lbl = slide.get("label", "")
+            counts[lbl] = counts.get(lbl, 0) + 1
+        per_group = "  ·  ".join(f"{lbl}: {n}" for lbl, n in counts.items())
+        return f"{total} slide(s)  -  {per_group}"
+
+    def _create_preview_empty(self):
+        return tb.Label(self.preview_inner, text="No slides yet - add some lyrics.",
+                        bootstyle="secondary")
+
+    def _create_preview_card(self, idx, total, slide, names):
+        label = slide.get("label", "")
+        card = tb.Labelframe(
+            self.preview_inner, text=f"#{idx} / {total}  -  {label}",
+            bootstyle="info", padding=8)
+        card.pack(fill=tk.X, padx=5, pady=4)
+        value_labels = {}
+        for col, name in enumerate(names):
+            col_frame = tb.Frame(card)
+            col_frame.grid(row=0, column=col, sticky="nw", padx=(0, 24))
+            tb.Label(col_frame, text=name, font=self.label_font,
+                     bootstyle="info").pack(anchor="w")
+            lines = slide.get(name, [])
+            value = tb.Label(col_frame, text="\n".join(lines) if lines else " ",
+                             justify=tk.LEFT, bootstyle="secondary",
+                             wraplength=320)
+            value.pack(anchor="w")
+            value_labels[name] = value
+        return {"card": card, "labels": value_labels, "label": label,
+                "total": total, "sig": self._slide_signature(slide, names)}
+
+    def _update_preview_card(self, entry, idx, total, slide, names):
+        label = slide.get("label", "")
+        entry["card"].config(text=f"#{idx} / {total}  -  {label}")
+        entry["label"] = label
+        entry["total"] = total
+        for name in names:
+            widget = entry["labels"].get(name)
+            if widget is None:
+                continue
+            lines = slide.get(name, [])
+            widget.config(text="\n".join(lines) if lines else " ")
+        entry["sig"] = self._slide_signature(slide, names)
 
     # ---------------------------------------------------------
     # GROUP NAMES TAB
@@ -830,8 +903,10 @@ class SongEditorApp(TkinterDnD.Tk):
             path = resource_path("GroupNames.txt")
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
+            invalidate_group_labels_cache()
             self.show_message("GroupNames.txt saved.")
             self.update_group_label_preview(content)
+            self._schedule_preview_refresh()
         except Exception as e:
             self.show_message("Error saving GroupNames.txt: " + str(e))
             log_error("Failed to save GroupNames.txt")
@@ -886,25 +961,90 @@ class SongEditorApp(TkinterDnD.Tk):
         self.song_title["values"] = saved_song_names()
 
     def import_from_melodii_action(self):
-        title = self.song_title.get().strip()
-        if not title:
-            self.show_message("Type a song name to import.")
+        names = saved_song_names()
+        if not names:
+            self.show_message("No saved songs found in the Melodii folder.")
             return
 
-        found = find_saved_song(title)
-        if not found:
-            self.show_message(f"No saved song named '{title}' in Melodii.")
-            return
+        win = tb.Toplevel(self)
+        win.title("Import from Melodii")
+        win.geometry("440x480")
+        win.transient(self)
 
+        tb.Label(win, text="Choose a saved song:").pack(anchor="w", padx=12, pady=(12, 4))
+        search_var = tk.StringVar()
+        search = tb.Entry(win, textvariable=search_var, bootstyle="info")
+        search.pack(fill=tk.X, padx=12)
+
+        list_frame = tb.Frame(win)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=8)
+        listbox = tk.Listbox(list_frame, activestyle="dotbox", exportselection=False)
+        scrollbar = tb.Scrollbar(list_frame, orient="vertical",
+                                 command=listbox.yview, bootstyle="info")
+        listbox.configure(yscrollcommand=scrollbar.set)
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        visible = []
+
+        def populate(*_):
+            query = search_var.get().strip().lower()
+            visible[:] = [n for n in names if query in n.lower()]
+            listbox.delete(0, tk.END)
+            for name in visible:
+                listbox.insert(tk.END, name)
+            current = self.song_title.get().strip()
+            if current in visible:
+                index = visible.index(current)
+            elif visible:
+                index = 0
+            else:
+                return
+            listbox.selection_set(index)
+            listbox.activate(index)
+            listbox.see(index)
+
+        def do_import(event=None):
+            selection = listbox.curselection()
+            if not selection:
+                return "break"
+            name = visible[selection[0]]
+            win.destroy()
+            self._import_melodii_song(name)
+            return "break"
+
+        def cancel(event=None):
+            win.destroy()
+            return "break"
+
+        buttons = tb.Frame(win)
+        buttons.pack(fill=tk.X, padx=12, pady=(0, 12))
+        tb.Button(buttons, text="Import", bootstyle="success",
+                  command=do_import).pack(side=tk.RIGHT)
+        tb.Button(buttons, text="Cancel", bootstyle="secondary-outline",
+                  command=cancel).pack(side=tk.RIGHT, padx=6)
+
+        search_var.trace_add("write", populate)
+        listbox.bind("<Double-Button-1>", do_import)
+        listbox.bind("<Return>", do_import)
+        search.bind("<Return>", do_import)
+        search.bind("<Down>", lambda e: (listbox.focus_set(), "break")[1])
+        win.bind("<Escape>", cancel)
+
+        populate()
+        search.focus_set()
+        win.grab_set()
+
+    def _import_melodii_song(self, name):
         try:
-            data = load_json_from_melodii(found)
+            data = load_json_from_melodii(name)
         except (OSError, ValueError) as e:
             self.show_message("Import failed: " + str(e))
             log_error("Failed to import from Melodii")
             return
 
-        self.song_title.set(found)
-        self.load_json_data(data, f"Imported: {found}")
+        self.song_title.set(name)
+        self.load_json_data(data, f"Imported: {name}")
 
     def new_song(self):
         if not tb.dialogs.Messagebox.yesno(
@@ -927,23 +1067,7 @@ class SongEditorApp(TkinterDnD.Tk):
     # SAVE SONG
     # ---------------------------------------------------------
     def get_known_labels(self):
-        try:
-            path = resource_path("GroupNames.txt")
-            with open(path, "r", encoding="utf-8") as f:
-                raw_labels = f.read().splitlines()
-            labels = []
-            for lbl in raw_labels:
-                if ".." in lbl:
-                    name, rng = lbl.split(" ")
-                    start, end = map(int, rng.split(".."))
-                    for i in range(start, end + 1):
-                        labels.append(f"{name} {i}")
-                else:
-                    if lbl.strip():
-                        labels.append(lbl.strip())
-            return labels
-        except Exception:
-            return []
+        return load_group_labels()
 
     def song_labels(self):
         """Known section labels that actually appear in the primary text block."""

@@ -1,7 +1,9 @@
 import os
 
 import pytest
-from SongEditorPro7Generic import escape_cocoa_rtf, rtf_text_start, inject_text_into_rtf, split_slides, resolve_template
+from SongEditorPro7Generic import (escape_cocoa_rtf, rtf_text_start, inject_text_into_rtf,
+                                  split_slides, resolve_template, expand_group_labels,
+                                  load_group_labels, invalidate_group_labels_cache)
 from autocorrect import find_typos
 import presentation_pb2
 from single_export import gen_single_pro
@@ -104,6 +106,45 @@ class TestSplitSlides:
         for slide in slides:
             assert "Verse 1" not in slide["Romana"]
             assert "Chorus" not in slide["Romana"]
+
+
+class TestGroupLabels:
+    def test_expand_ranges(self):
+        labels = expand_group_labels(["Verse 1..3", "Chorus", "", "  Bridge  "])
+        assert labels == ["Verse 1", "Verse 2", "Verse 3", "Chorus", "Bridge"]
+
+    def test_expand_keeps_unparseable_lines(self):
+        assert expand_group_labels(["Weird..thing"]) == ["Weird..thing"]
+        assert expand_group_labels(["Verse 1..x"]) == ["Verse 1..x"]
+
+    def test_load_group_labels_from_file(self, tmp_path):
+        path = tmp_path / "GroupNames.txt"
+        path.write_text("Verse 1..2\nChorus\n", encoding="utf-8")
+        assert load_group_labels(str(path)) == ["Verse 1", "Verse 2", "Chorus"]
+
+    def test_load_group_labels_missing_file(self, tmp_path):
+        assert load_group_labels(str(tmp_path / "nope.txt")) == []
+
+    def test_load_group_labels_cache_invalidated(self, tmp_path):
+        path = tmp_path / "GroupNames.txt"
+        path.write_text("Verse 1\n", encoding="utf-8")
+        assert load_group_labels(str(path)) == ["Verse 1"]
+        path.write_text("Chorus\n", encoding="utf-8")
+        invalidate_group_labels_cache()
+        assert load_group_labels(str(path)) == ["Chorus"]
+
+    def test_split_slides_accepts_explicit_labels(self):
+        names = ["Romana"]
+        texts = {"Romana": ["Verse 1", "a", "b", "Chorus", "c", "d"]}
+        slides = split_slides(names, texts, 2, labels=["Verse 1", "Chorus"])
+        assert [s["label"] for s in slides] == ["Verse 1", "Chorus"]
+
+    def test_split_slides_with_no_labels_treats_text_as_lyrics(self):
+        names = ["Romana"]
+        texts = {"Romana": ["Verse 1", "a", "b"]}
+        slides = split_slides(names, texts, 3, labels=[])
+        assert len(slides) == 1
+        assert slides[0]["Romana"] == ["Verse 1", "a", "b"]
 
 
 class TestResolveTemplate:
