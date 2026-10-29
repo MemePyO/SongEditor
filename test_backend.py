@@ -1,12 +1,14 @@
 import os
+import json
 
 import pytest
 from SongEditorPro7Generic import (escape_cocoa_rtf, rtf_text_start, inject_text_into_rtf,
                                   split_slides, resolve_template, expand_group_labels,
-                                  load_group_labels, invalidate_group_labels_cache)
+                                  load_group_labels, invalidate_group_labels_cache,
+                                  save_song)
 from autocorrect import find_typos
 import presentation_pb2
-from single_export import gen_single_pro
+from single_export import gen_single_pro, save_single
 from melodii import save_json_to_melodii, load_json_from_melodii, saved_song_names, find_saved_song
 
 
@@ -249,3 +251,149 @@ class TestMelodii:
         assert find_saved_song("How Great", tmp_path) == "How Great"
         assert find_saved_song("how great", tmp_path) == "How Great"
         assert find_saved_song("Missing", tmp_path) is None
+
+
+# ---------------------------------------------------------
+#  SAVE CONTRACTS (JSON + .pro)
+# ---------------------------------------------------------
+SONG_TEXTS = {
+    "Romana": ["Verse 1", "linia 1", "linia 2", "Chorus", "ref 1"],
+    "Engleza": ["Verse 1", "line 1", "line 2", "Chorus", "cho 1"],
+}
+
+
+def _load_pro(source):
+    presentation_obj = presentation_pb2.Presentation()
+    if isinstance(source, bytes):
+        presentation_obj.ParseFromString(source)
+    else:
+        with open(source, "rb") as f:
+            presentation_obj.ParseFromString(f.read())
+    return presentation_obj
+
+
+def _elements(cue):
+    return cue.actions[0].slide.presentation.base_slide.elements
+
+
+class TestSaveSongContract:
+    def test_writes_json_and_pro(self, tmp_path):
+        base = str(tmp_path / "song")
+        save_song(["Romana", "Engleza"], SONG_TEXTS, 2, base)
+
+        assert os.path.isfile(base + ".json")
+        assert os.path.isfile(base + ".pro")
+        with open(base + ".json", "r", encoding="utf-8") as f:
+            assert json.load(f) == SONG_TEXTS
+
+        pro = _load_pro(base + ".pro")
+        # 1 intro + 2 lyric slides + Interlude + Ending
+        assert len(pro.cues) == 5
+        assert [e.element.name for e in _elements(pro.cues[0])] == ["Romana", "Engleza"]
+
+    def test_cue_groups_include_sections_and_fixed_slides(self, tmp_path):
+        base = str(tmp_path / "song")
+        save_song(["Romana", "Engleza"], SONG_TEXTS, 2, base)
+        pro = _load_pro(base + ".pro")
+        groups = [cg.group.name for cg in pro.cue_groups]
+        assert groups[0] == "Intro"
+        assert groups[1:3] == ["Verse 1", "Chorus"]
+        assert groups[-2:] == ["Interlude", "Ending"]
+
+    def test_lyrics_land_in_the_right_block(self, tmp_path):
+        base = str(tmp_path / "song")
+        save_song(["Romana", "Engleza"], SONG_TEXTS, 2, base)
+        pro = _load_pro(base + ".pro")
+        by_name = {e.element.name: e.element.text.rtf_data for e in _elements(pro.cues[1])}
+        # Both template blocks are all-caps, so compare case-insensitively.
+        assert b"linia 1" in by_name["Romana"].lower()
+        assert b"linia 2" in by_name["Romana"].lower()
+        assert b"line 1" in by_name["Engleza"].lower()
+        assert b"line 2" in by_name["Engleza"].lower()
+        assert b"line 1" not in by_name["Romana"].lower()
+
+    def test_notes_injected_into_every_cue(self, tmp_path):
+        base = str(tmp_path / "song")
+        save_song(["Romana", "Engleza"], SONG_TEXTS, 2, base,
+                  notes_lines=["note one", "note two"])
+        pro = _load_pro(base + ".pro")
+        for cue in pro.cues:
+            notes = cue.actions[0].slide.presentation.notes.rtf_data
+            assert b"note one" in notes
+            assert b"note two" in notes
+
+    def test_no_notes_leaves_template_notes_untouched(self, tmp_path):
+        template = _load_pro(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                          "Template.pro"))
+        template_notes = template.cues[0].actions[0].slide.presentation.notes.rtf_data
+        base = str(tmp_path / "song")
+        save_song(["Romana", "Engleza"], SONG_TEXTS, 2, base)
+        pro = _load_pro(base + ".pro")
+        for cue in pro.cues:
+            assert cue.actions[0].slide.presentation.notes.rtf_data == template_notes
+
+    def test_arrangement_contract(self, tmp_path):
+        base = str(tmp_path / "song")
+        save_song(["Romana", "Engleza"], SONG_TEXTS, 2, base,
+                  arrangement_order="Verse 1, Chorus, Missing")
+        pro = _load_pro(base + ".pro")
+        # The template ships with one empty "Duminica" arrangement.
+        assert len(pro.arrangements) == 2
+        arrangement = pro.arrangements[-1]
+        assert arrangement.name == "Duminica"
+        assert pro.selected_arrangement.string == arrangement.uuid.string
+
+        group_uuids = {cg.group.uuid.string for cg in pro.cue_groups}
+        assert len(arrangement.group_identifiers) == 2  # "Missing" is skipped
+        assert all(gi.string in group_uuids for gi in arrangement.group_identifiers)
+
+    def test_no_arrangement_when_not_requested(self, tmp_path):
+        base = str(tmp_path / "song")
+        save_song(["Romana", "Engleza"], SONG_TEXTS, 2, base)
+        pro = _load_pro(base + ".pro")
+        # Only the template's empty arrangement remains.
+        assert len(pro.arrangements) == 1
+        assert len(pro.arrangements[0].group_identifiers) == 0
+
+
+class TestSaveSingleContract:
+    SINGLE_TEXTS = {"Romana": ["Verse 1", "linia 1", "linia 2", "Chorus", "ref 1"]}
+
+    def test_writes_json_and_pro(self, tmp_path):
+        base = str(tmp_path / "song (Single)")
+        save_single("Romana", self.SINGLE_TEXTS, 2, base)
+
+        assert os.path.isfile(base + ".json")
+        assert os.path.isfile(base + ".pro")
+        with open(base + ".json", "r", encoding="utf-8") as f:
+            assert json.load(f) == self.SINGLE_TEXTS
+
+        pro = _load_pro(base + ".pro")
+        assert len(pro.cues) == 5  # intro + 2 lyric slides + Interlude + Ending
+        for cue in pro.cues:
+            assert [e.element.name for e in _elements(cue)] == ["Romana"]
+
+    def test_notes_injected_into_every_cue(self, tmp_path):
+        base = str(tmp_path / "song (Single)")
+        save_single("Romana", self.SINGLE_TEXTS, 2, base, notes_lines=["single note"])
+        pro = _load_pro(base + ".pro")
+        for cue in pro.cues:
+            assert b"single note" in cue.actions[0].slide.presentation.notes.rtf_data
+
+    def test_arrangement_contract(self, tmp_path):
+        base = str(tmp_path / "song (Single)")
+        save_single("Romana", self.SINGLE_TEXTS, 2, base,
+                    arrangement_order="Verse 1, Chorus")
+        pro = _load_pro(base + ".pro")
+        assert len(pro.arrangements) == 2  # template's empty one + generated
+        assert pro.arrangements[-1].name == "Duminica"
+        assert len(pro.arrangements[-1].group_identifiers) == 2
+
+    def test_json_matches_passed_texts(self, tmp_path):
+        base = str(tmp_path / "song (Single)")
+        texts = {"Romana": ["Verse 1", "only this"]}
+        save_single("Romana", texts, 2, base)
+        with open(base + ".json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert data == texts
+        assert list(data) == ["Romana"]
