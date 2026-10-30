@@ -5,7 +5,7 @@ import pytest
 from SongEditorPro7Generic import (escape_cocoa_rtf, rtf_text_start, inject_text_into_rtf,
                                   split_slides, resolve_template, expand_group_labels,
                                   load_group_labels, invalidate_group_labels_cache,
-                                  save_song)
+                                  save_song, gen_pro_data, rtf_to_plain, pro_to_song_texts)
 from autocorrect import find_typos
 import presentation_pb2
 from single_export import gen_single_pro, save_single
@@ -162,6 +162,49 @@ class TestResolveTemplate:
         assert resolved is None
         assert used_fallback is True
         assert names
+
+
+class TestRtfToPlain:
+    def test_plain_text(self):
+        assert rtf_to_plain(b"{\\rtf1\\ansi Hello World}") == ["Hello World"]
+
+    def test_par_line_break(self):
+        assert rtf_to_plain(b"{\\rtf1\\ansi Hello\\par World}") == ["Hello", "World"]
+
+    def test_control_word_param_ignored(self):
+        # \fs24 sets font size; its numeric param must not leak into the text.
+        assert rtf_to_plain(b"{\\rtf1\\ansi Hello\\fs24") == ["Hello"]
+
+    def test_hex_escape(self):
+        assert rtf_to_plain(b"{\\rtf1\\ansi Caf\\'e9 B}") == ["Café B"]
+
+    def test_unicode_escape(self):
+        assert rtf_to_plain(b"{\\rtf1\\ansi Caf\\u233?0? B}") == ["Café B"]
+
+    def test_empty_rtf(self):
+        assert rtf_to_plain(b"") == []
+
+
+class TestProToSongTexts:
+    def test_round_trip(self):
+        texts = {
+            "Romana": ["Verse 1", "linia 1", "linia 2", "Chorus", "ref 1"],
+            "Engleza": ["Verse 1", "line 1", "line 2", "Chorus", "cho 1"],
+        }
+        raw = gen_pro_data(["Romana", "Engleza"], texts, 2)
+        result = pro_to_song_texts(raw, ["Romana", "Engleza"])
+        assert result["Romana"] == ["Verse 1", "LINIA 1", "LINIA 2", "Chorus", "REF 1"]
+        assert result["Engleza"] == ["Verse 1", "LINE 1", "LINE 2", "Chorus", "CHO 1"]
+
+    def test_empty_pro_yields_empty_blocks(self):
+        raw = gen_pro_data(["Romana"], {"Romana": []}, 2)
+        result = pro_to_song_texts(raw, ["Romana"])
+        assert result["Romana"] == []
+
+    def test_pro_with_empty_lyrics_has_no_labels(self):
+        raw = gen_pro_data(["Romana", "Engleza"], {"Romana": [], "Engleza": []}, 2)
+        result = pro_to_song_texts(raw, ["Romana", "Engleza"])
+        assert result == {"Romana": [], "Engleza": []}
 
 
 class TestFindTypos:

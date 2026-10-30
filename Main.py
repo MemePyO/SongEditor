@@ -13,7 +13,7 @@ import threading
 import re
 from SongEditorPro7Generic import (save_song, get_text_block_names, split_slides,
                                   resolve_template, load_group_labels,
-                                  invalidate_group_labels_cache)
+                                  invalidate_group_labels_cache, pro_to_song_texts)
 from single_export import save_single
 from melodii import saved_song_names, save_json_to_melodii, load_json_from_melodii
 from autocorrect import find_typos, get_spellchecker
@@ -926,8 +926,14 @@ class SongEditorApp(TkinterDnD.Tk):
     # OPEN FILE
     # ---------------------------------------------------------
     def open_file(self):
-        path = filedialog.askopenfilename(initialdir=self.output_dir, filetypes=[("JSON files", "*.json")])
+        path = filedialog.askopenfilename(
+            initialdir=self.output_dir,
+            filetypes=[("All files", "*.*"), ("JSON files", "*.json"),
+                       ("ProPresenter files", "*.pro")])
         if not path:
+            return
+        if path.lower().endswith(".pro"):
+            self._load_pro_file(path)
             return
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -939,6 +945,26 @@ class SongEditorApp(TkinterDnD.Tk):
 
         self.song_title.set(os.path.basename(path).replace(".json", ""))
         self.load_json_data(data, f"Opened: {path}")
+
+    def _load_pro_file(self, path):
+        try:
+            with open(path, "rb") as f:
+                raw = f.read()
+            texts = pro_to_song_texts(raw, self.text_block_names)
+            first = self.text_block_names[0]
+            for name in self.text_block_names:
+                self._set_text(self.text_widgets[name], "\n".join(texts.get(name, [])))
+            self._syncing_single = True
+            self._set_text(self.single_text, "\n".join(texts.get(first, [])))
+            self._syncing_single = False
+            self.update_number_widget()
+            self.update_single_number_widget()
+            self.song_title.set(os.path.splitext(os.path.basename(path))[0])
+            self.show_message(f"Opened ProPresenter file: {os.path.basename(path)}")
+            self._schedule_preview_refresh()
+        except Exception as e:
+            self.show_message("Error opening ProPresenter file: " + str(e))
+            log_error("Failed to open ProPresenter file")
 
     def load_json_data(self, data, label=""):
         for name in self.text_block_names:

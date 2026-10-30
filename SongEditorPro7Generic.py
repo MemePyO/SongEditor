@@ -484,5 +484,137 @@ def resolve_template(configured_path=None):
     return None, get_text_block_names(None), bool(configured_path)
 
 
+# Fixed group names that wrap a song and are not user lyrics.
+_FIXED_GROUPS = ("Intro", "Interlude", "Ending")
+
+
+def rtf_to_plain(rtf_bytes):
+    """Decode a ProPresenter RTF blob into a list of plain text lines.
+
+    Handles ``\\par``/``\\line`` breaks, ``\\'hh`` hex escapes, ``\\uN?M?``
+    unicode escapes and ignores other control words/symbols. Braces (group
+    delimiters) are skipped. Empty lines are kept so callers can filter.
+    """
+    if not rtf_bytes:
+        return []
+    content = rtf_bytes[rtf_text_start(rtf_bytes):]
+    lines = []
+    current = []
+    i = 0
+    n = len(content)
+
+    def is_letter(b):
+        return (0x61 <= b <= 0x7A) or (0x41 <= b <= 0x5A)
+
+    def is_digit(b):
+        return 0x30 <= b <= 0x39
+
+    while i < n:
+        c = content[i]
+        if c == 0x5C and i + 1 < n:  # backslash -> control sequence
+            cmd = content[i + 1]
+            if cmd == 0x75:  # \uN?M? -> unicode surrogate pair
+                j = i + 2
+                num_start = j
+                while j < n and is_digit(content[j]):
+                    j += 1
+                code = int(content[num_start:j]) if j > num_start else 0
+                i = j
+                if i < n and content[i:i + 1] == b"?":
+                    # Surrogate-pair suffix: ?M?
+                    k = i + 1
+                    num_start2 = k
+                    while k < n and is_digit(content[k]):
+                        k += 1
+                    low = int(content[num_start2:k]) if k > num_start2 else 0
+                    if 0xD800 <= code <= 0xDBFF and 0xDC00 <= low <= 0xDFFF:
+                        code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00)
+                    i = k + 1
+                current.append(chr(code))
+            elif is_letter(cmd):
+                # Control word: letters followed by an optional numeric param
+                # and an optional single space delimiter.
+                end = i + 2
+                while end < n and is_letter(content[end]):
+                    end += 1
+                num_start = end
+                while end < n and is_digit(content[end]):
+                    end += 1
+                word = content[i + 1:num_start].decode("ascii")
+                if end < n and content[end] == 0x20:
+                    end += 1
+                i = end
+                if word in ("par", "line"):
+                    lines.append("".join(current))
+                    current = []
+                elif word == "tab":
+                    current.append("\t")
+                # Ignore other control words (fonts, sizes, caps, ...)
+            elif cmd == 0x27:  # \'hh -> hex character
+                hex_start = i + 2
+                hex_str = content[hex_start:hex_start + 2].decode("ascii", "replace")
+                try:
+                    current.append(chr(int(hex_str, 16)))
+                except ValueError:
+                    pass
+                i = hex_start + 2
+            else:
+                # Control symbol like \{ \} \\ \* — not needed for plain text.
+                i = i + 2
+            continue
+        elif c == 0x7B or c == 0x7D:  # group delimiters are not text
+            i += 1
+            continue
+        else:
+            current.append(chr(c))
+            i += 1
+    lines.append("".join(current))
+    return lines
+
+
+def pro_to_song_texts(raw_bytes, text_block_names):
+    """Convert a .pro presentation back into per-block lyric line lists.
+
+    Returns ``{block_name: [lines...]}`` where group label lines are kept so
+    that the result can be dropped straight into the editor text widgets (and
+    re-used by ``split_slides``). Fixed groups (Intro/Interlude/Ending) are
+    skipped; lyric groups map to the text blocks they hold.
+    """
+    presentation_obj = presentation_pb2.Presentation()
+    presentation_obj.ParseFromString(raw_bytes)
+
+    group_for_cue = {}
+    for cg in presentation_obj.cue_groups:
+        for cid in cg.cue_identifiers:
+            group_for_cue[cid.string] = cg.group.name
+
+    texts = {tb: [] for tb in text_block_names}
+    last_label = {tb: None for tb in text_block_names}
+
+    for cue in presentation_obj.cues:
+        label = group_for_cue.get(cue.uuid.string, "")
+        if label in _FIXED_GROUPS:
+            continue
+        lines_by_block = {}
+        for action in cue.actions:
+            for el in action.slide.presentation.base_slide.elements:
+                tb = el.element.name
+                if tb not in texts:
+                    continue
+                lines = [ln.strip() for ln in rtf_to_plain(el.element.text.rtf_data) if ln.strip()]
+                if element_all_caps(el):
+                    lines = [ln.upper() for ln in lines]
+                if lines:
+                    lines_by_block[tb] = lines
+        for tb in text_block_names:
+            lines = lines_by_block.get(tb, [])
+            if label != last_label[tb]:
+                texts[tb].append(label)
+                last_label[tb] = label
+            texts[tb].extend(lines)
+
+    return texts
+
+
 if __name__ == "__main__":
     print(get_text_block_names())
