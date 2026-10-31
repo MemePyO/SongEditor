@@ -8,7 +8,8 @@ the section groups and slide splits already built.
 
 It supports multiple languages/translations (the shipped template has
 `Romana` and `Engleza`), a "single language" export, Romanian spell checking,
-and PDF import.
+PDF import, a Melodii song import picker, and the ability to **open saved
+presentations back into the editor**.
 
 ---
 
@@ -24,6 +25,26 @@ new `.pro` presentation where:
 - lyrics are split into **slides** of N lines (configurable)
 - each language is placed in its own text box, matching the template layout
 - the text keeps the template's RTF styling (font, colour, alignment)
+
+It can also go the other way: a `.pro` presentation produced by this app (or any
+ProPresenter export) can be **opened in the editor** — the RTF text is decoded
+(including `\u` unicode escapes, hex escapes and surrogate pairs) and re-injected
+back into the template, so diacritics such as `Ă`, `Â`, `Î`, `ș`, `ț` survive the
+round trip.
+
+---
+
+## Recent changes
+
+- **`.pro` open/edit** – open a ProPresenter file into the editor; group labels
+  and lyrics are decoded from RTF and re-saved back out.
+- **Melodii import** – pick a saved Melodii song and import its sections.
+- **Slide preview** – incremental card updates with a debounce, plus per-group
+  slide counts in the preview summary.
+- **Undo/select-all**, **New song**, output folder picker, arrangement labels
+  from the song text.
+- **Template fallback** – if the configured template is missing/stale, fall back
+  to the bundled template.
 
 ---
 
@@ -56,7 +77,8 @@ Run the app, then use the three tabs:
 - **Lines per Slide** – how many lyric lines go on each slide.
 - **Arrangement** – comma-separated group order (e.g. `Verse 1, Chorus, Verse 2, Chorus`).
 - **Font Size** – editor font size (persisted).
-- **Open** – load a saved `.json` back into the editor.
+- **Open** – load a saved `.json` back into the editor, or open a ProPresenter
+  `.pro` presentation into the editor (RTF decode → editor → re-export).
 - **Save** – write `<title>.pro` + `<title>.json`.
 - **Check Typos** – Romanian spell check; unknown words are highlighted.
 - **Light/Dark Mode** – theme toggle (dark blue-tinted / light green-tinted),
