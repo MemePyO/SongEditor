@@ -179,7 +179,28 @@ class TestRtfToPlain:
         assert rtf_to_plain(b"{\\rtf1\\ansi Caf\\'e9 B}") == ["Café B"]
 
     def test_unicode_escape(self):
-        assert rtf_to_plain(b"{\\rtf1\\ansi Caf\\u233?0? B}") == ["Café B"]
+        assert rtf_to_plain(b"{\\rtf1\\ansi Caf\\u233? B}") == ["Café B"]
+
+    def test_unicode_escape_surrogate_pair(self):
+        # Astral plane: encoder emits two \u escapes (high?low?) that must
+        # combine into a single code point. Values are signed 16-bit shorts.
+        cp = 0x1F600  # emoji, astral plane
+        high = 0xD800 + ((cp - 0x10000) >> 10)
+        low = 0xDC00 + ((cp - 0x10000) & 0x3FF)
+        high_s = high - 65536 if high > 32767 else high
+        low_s = low - 65536 if low > 32767 else low
+
+        def esc(v):
+            return "\\u" + str(v - 65536 if v > 32767 else v) + "?"
+
+        raw = ("{\\rtf1\\ansi " + esc(high_s) + esc(low_s) + "}").encode("ascii")
+        assert rtf_to_plain(raw) == [chr(cp)]
+
+    def test_unicode_escape_negative_signed_value(self):
+        # Negative signed shorts appear for astral code points (e.g. \u-10179?).
+        high = -10179 + 65536  # 0xD83D, a high surrogate
+        raw = ("{\\rtf1\\ansi \\u-10179?}").encode("ascii")
+        assert rtf_to_plain(raw) == [chr(high)]
 
     def test_empty_rtf(self):
         assert rtf_to_plain(b"") == []

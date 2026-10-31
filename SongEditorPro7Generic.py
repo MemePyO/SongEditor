@@ -489,59 +489,82 @@ _FIXED_GROUPS = ("Intro", "Interlude", "Ending")
 
 
 def rtf_to_plain(rtf_bytes):
-    """Decode a ProPresenter RTF blob into a list of plain text lines.
+    r"""Decode a ProPresenter RTF blob into a list of plain text lines.
 
-    Handles ``\\par``/``\\line`` breaks, ``\\'hh`` hex escapes, ``\\uN?M?``
-    unicode escapes and ignores other control words/symbols. Braces (group
-    delimiters) are skipped. Empty lines are kept so callers can filter.
+    Handles \par/\line breaks, \'hh hex escapes, \uN? unicode escapes (including
+    surrogate pairs for astral plane code points) and ignores other control words
+    and symbols. Braces (group delimiters) are skipped, and only text inside the
+    top-level group (depth 1) is kept. Empty lines are kept so callers can filter.
     """
     if not rtf_bytes:
         return []
-    content = rtf_bytes[rtf_text_start(rtf_bytes):]
+
+    is_letter = lambda b: (0x61 <= b <= 0x7A) or (0x41 <= b <= 0x5A)
+    is_digit = lambda b: 0x30 <= b <= 0x39
+
     lines = []
     current = []
     i = 0
-    n = len(content)
-
-    def is_letter(b):
-        return (0x61 <= b <= 0x7A) or (0x41 <= b <= 0x5A)
-
-    def is_digit(b):
-        return 0x30 <= b <= 0x39
+    n = len(rtf_bytes)
+    depth = 0
+    started = False
 
     while i < n:
-        c = content[i]
-        if c == 0x5C and i + 1 < n:  # backslash -> control sequence
-            cmd = content[i + 1]
-            if cmd == 0x75:  # \uN?M? -> unicode surrogate pair
+        c = rtf_bytes[i]
+        if c == 0x7B:
+            depth += 1
+            i += 1
+            continue
+        if c == 0x7D:
+            if depth == 0:
+                break
+            depth -= 1
+            i += 1
+            continue
+        if c == 0x5C and i + 1 < n:
+            cmd = rtf_bytes[i + 1]
+            if cmd == 0x75 and i + 2 < n and (is_digit(rtf_bytes[i + 2]) or rtf_bytes[i + 2:i + 3] == b"-"):
+                # \uN? unicode escape (N may be signed, e.g. \u-10179? for high surrogates)
                 j = i + 2
-                num_start = j
-                while j < n and is_digit(content[j]):
+                neg = rtf_bytes[j:j + 1] == b"-"
+                if neg:
                     j += 1
-                code = int(content[num_start:j]) if j > num_start else 0
-                i = j
-                if i < n and content[i:i + 1] == b"?":
-                    # Surrogate-pair suffix: ?M?
-                    k = i + 1
-                    num_start2 = k
-                    while k < n and is_digit(content[k]):
-                        k += 1
-                    low = int(content[num_start2:k]) if k > num_start2 else 0
-                    if 0xD800 <= code <= 0xDBFF and 0xDC00 <= low <= 0xDFFF:
-                        code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00)
-                    i = k + 1
-                current.append(chr(code))
-            elif is_letter(cmd):
-                # Control word: letters followed by an optional numeric param
-                # and an optional single space delimiter.
+                num_start = j
+                while j < n and is_digit(rtf_bytes[j]):
+                    j += 1
+                val = int(rtf_bytes[num_start:j]) if j > num_start else 0
+                code = -val if neg else val
+                code_u = code + 65536 if code < 0 else code
+                end = j
+                if j < n and rtf_bytes[j:j + 1] == b"?":
+                    end = j + 1
+                if 0xD800 <= code_u <= 0xDBFF and end + 1 < n and rtf_bytes[end:end + 2] == b"\\u":
+                    # Surrogate pair: \u{h}?\\u{l}?
+                    j2 = end + 2
+                    neg2 = rtf_bytes[j2:j2 + 1] == b"-"
+                    if neg2:
+                        j2 += 1
+                    num_start2 = j2
+                    while j2 < n and is_digit(rtf_bytes[j2]):
+                        j2 += 1
+                    val2 = int(rtf_bytes[num_start2:j2]) if j2 > num_start2 else 0
+                    low = -val2 if neg2 else val2
+                    low_u = low + 65536 if low < 0 else low
+                    if 0xDC00 <= low_u <= 0xDFFF:
+                        code = 0x10000 + ((code_u - 0xD800) << 10) + (low_u - 0xDC00)
+                        end = j2 + 1
+                current.append(chr(code + 65536 if code < 0 else code))
+                i = end
+                continue
+            if is_letter(cmd):
                 end = i + 2
-                while end < n and is_letter(content[end]):
+                while end < n and is_letter(rtf_bytes[end]):
                     end += 1
                 num_start = end
-                while end < n and is_digit(content[end]):
+                while end < n and is_digit(rtf_bytes[end]):
                     end += 1
-                word = content[i + 1:num_start].decode("ascii")
-                if end < n and content[end] == 0x20:
+                word = rtf_bytes[i + 1:num_start].decode("ascii")
+                if end < n and rtf_bytes[end:end + 1] == b" ":
                     end += 1
                 i = end
                 if word in ("par", "line"):
@@ -549,25 +572,21 @@ def rtf_to_plain(rtf_bytes):
                     current = []
                 elif word == "tab":
                     current.append("\t")
-                # Ignore other control words (fonts, sizes, caps, ...)
-            elif cmd == 0x27:  # \'hh -> hex character
+                continue
+            if cmd == 0x27:
                 hex_start = i + 2
-                hex_str = content[hex_start:hex_start + 2].decode("ascii", "replace")
-                try:
-                    current.append(chr(int(hex_str, 16)))
-                except ValueError:
-                    pass
+                hex_str = rtf_bytes[hex_start:hex_start + 2].decode("ascii", "replace")
+                code = int(hex_str, 16) if len(hex_str) == 2 else 0
+                current.append(chr(code))
                 i = hex_start + 2
-            else:
-                # Control symbol like \{ \} \\ \* — not needed for plain text.
-                i = i + 2
+                continue
+            i = i + 2
             continue
-        elif c == 0x7B or c == 0x7D:  # group delimiters are not text
-            i += 1
-            continue
-        else:
+        if not started and depth == 1 and c not in (0x20, 0x0A, 0x0D, 0x09):
+            started = True
+        if started:
             current.append(chr(c))
-            i += 1
+        i += 1
     lines.append("".join(current))
     return lines
 
