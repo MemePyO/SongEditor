@@ -124,6 +124,7 @@ class SongEditorApp(TkinterDnD.Tk):
         self.text_widgets = {}
         self._syncing_single = False
         self._preview_refresh_job = None
+        self._autosave_job = None
         if template_path is _UNSET:
             self.template_path = self.app_config.get("template_path", None)
         else:
@@ -134,6 +135,11 @@ class SongEditorApp(TkinterDnD.Tk):
 
         self.drop_target_register(DND_FILES)
         self.dnd_bind('<<Drop>>', self.handle_pdf_drop)
+
+        # Global keyboard shortcuts
+        self.bind_all("<Control-s>", self._on_shortcut_save)
+        self.bind_all("<Control-o>", self._on_shortcut_open)
+        self.bind_all("<Control-n>", self._on_shortcut_new)
 
         self.init_ui()
 
@@ -200,7 +206,7 @@ class SongEditorApp(TkinterDnD.Tk):
                 en_text = "\n".join(en_lines)
                 self.after(0, self._populate_pdf, ro_text, en_text, path, target_name)
         except Exception as e:
-            self.after(0, self.show_message, f"PDF extraction failed: {e}")
+            self.after(0, self.show_error, f"PDF extraction failed: {e}")
             log_error("PDF extraction failed")
 
     def _populate_pdf(self, ro_text, en_text, path, target_name=None):
@@ -540,6 +546,7 @@ class SongEditorApp(TkinterDnD.Tk):
             self.bind_text_shortcuts(text_widget)
             self.text_widgets[name] = text_widget
             text_widget.bind("<Motion>", self.on_hover)
+            text_widget.bind("<Key>", self._on_text_change)
             text_widget.bind("<KeyRelease>", self.update_number_widget)
             text_widget.bind("<KeyRelease>", self._schedule_preview_refresh, add="+")
 
@@ -613,6 +620,7 @@ class SongEditorApp(TkinterDnD.Tk):
         self.single_text.pack(expand=True, fill=tk.BOTH)
         self.bind_unicode_fix(self.single_text)
         self.bind_text_shortcuts(self.single_text)
+        self.single_text.bind("<Key>", self._on_text_change)
 
         # Download button
         tb.Button(self.single_tab, text="Download as Single",
@@ -881,6 +889,7 @@ class SongEditorApp(TkinterDnD.Tk):
         self.bind_unicode_fix(self.groupnames_text)
         self.bind_text_shortcuts(self.groupnames_text)
         self.groupnames_text.bind("<MouseWheel>", self._sync_all_scroll)
+        self.groupnames_text.bind("<Key>", self._on_text_change)
 
         tb.Button(self.groupnames_tab, text="Save Changes", bootstyle="success-outline", command=self.save_groupnames).grid(row=2, column=0, pady=10)
 
@@ -939,7 +948,7 @@ class SongEditorApp(TkinterDnD.Tk):
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except Exception as e:
-            self.show_message("Error opening file: " + str(e))
+            self.show_error("Error opening file: " + str(e))
             log_error("Failed to open file")
             return
 
@@ -963,7 +972,7 @@ class SongEditorApp(TkinterDnD.Tk):
             self.show_message(f"Opened ProPresenter file: {os.path.basename(path)}")
             self._schedule_preview_refresh()
         except Exception as e:
-            self.show_message("Error opening ProPresenter file: " + str(e))
+            self.show_error("Error opening ProPresenter file: " + str(e))
             log_error("Failed to open ProPresenter file")
 
     def load_json_data(self, data, label=""):
@@ -1065,7 +1074,7 @@ class SongEditorApp(TkinterDnD.Tk):
         try:
             data = load_json_from_melodii(name)
         except (OSError, ValueError) as e:
-            self.show_message("Import failed: " + str(e))
+            self.show_error("Import failed: " + str(e))
             log_error("Failed to import from Melodii")
             return
 
@@ -1088,6 +1097,47 @@ class SongEditorApp(TkinterDnD.Tk):
         self.arrangement_order.insert(0, "Verse 1, Chorus, Verse 2, Chorus, Bridge, Chorus")
         self.show_message("Started a new song.")
         self._schedule_preview_refresh()
+
+    # ---------------------------------------------------------
+    # AUTOSAVE / KEYBOARD SHORTCUTS
+    # ---------------------------------------------------------
+    def schedule_autosave(self, event=None):
+        if self._autosave_job is not None:
+            try:
+                self.after_cancel(self._autosave_job)
+            except Exception:
+                pass
+        # Debounce autosave while the user is typing.
+        self._autosave_job = self.after(2000, self.autosave_now)
+
+    def autosave_now(self):
+        self._autosave_job = None
+        title = self.song_title.get().strip()
+        if not title:
+            return
+        data = self.collect_song_texts()
+        path = os.path.join(self.output_dir, title + ".json")
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            log_error("Auto-save failed")
+            self.show_message("Auto-save failed: " + str(e))
+
+    def _on_text_change(self, event=None):
+        self.schedule_autosave()
+
+    def _on_shortcut_save(self, event=None):
+        self.save_song_action()
+        return "break"
+
+    def _on_shortcut_open(self, event=None):
+        self.open_file()
+        return "break"
+
+    def _on_shortcut_new(self, event=None):
+        self.new_song()
+        return "break"
 
     # ---------------------------------------------------------
     # SAVE SONG
@@ -1165,7 +1215,7 @@ class SongEditorApp(TkinterDnD.Tk):
             self.refresh_song_autocomplete()
             self.show_message(f"Saved! Import in ProPresenter: File → Import → {output_file}.pro")
         except Exception as e:
-            self.show_message("Save failed: " + str(e))
+            self.show_error("Save failed: " + str(e))
             log_error("Failed to save song")
 
     # ---------------------------------------------------------
@@ -1199,7 +1249,7 @@ class SongEditorApp(TkinterDnD.Tk):
                         template_path=self.template_path)
             self.show_message(f"Saved single! Import in ProPresenter: File → Import → {output_file}.pro")
         except Exception as e:
-            self.show_message("Single download failed: " + str(e))
+            self.show_error("Single download failed: " + str(e))
             log_error("Failed to download single")
 
     # ---------------------------------------------------------
@@ -1221,12 +1271,18 @@ class SongEditorApp(TkinterDnD.Tk):
                 w.tag_config("typo", background="#5c1a1a", foreground="#ff6b6b")
             self.show_message(f"Found {total} possible typo(s). Highlighted in red.")
         except Exception as e:
-            self.show_message("Check typos failed: " + str(e))
+            self.show_error("Check typos failed: " + str(e))
             log_error("Check typos failed")
 
     # ---------------------------------------------------------
-    # STATUS MESSAGE
+    # STATUS MESSAGE / DIALOGS
     # ---------------------------------------------------------
+    def show_error(self, msg, title="Error"):
+        try:
+            tb.dialogs.Messagebox.show_error(message=msg, title=title, parent=self)
+        except Exception:
+            self.show_message(msg)
+
     def show_message(self, msg):
         self.message_area.delete("1.0", tk.END)
         self.message_area.insert(tk.END, msg)
