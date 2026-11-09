@@ -205,6 +205,27 @@ class TestRtfToPlain:
     def test_empty_rtf(self):
         assert rtf_to_plain(b"") == []
 
+    def test_control_word_with_param_not_treated_as_text(self):
+        # \uc1 is a control word (unicode char fallback), not a unicode escape;
+        # it must be consumed without injecting junk characters.
+        assert rtf_to_plain(b"{\\rtf1\\ansi Hello \\uc1 World}") == ["Hello World"]
+
+    def test_tab_char_in_text(self):
+        assert rtf_to_plain(b"{\\rtf1\\ansi Hello\tWorld}") == ["Hello\tWorld"]
+
+    def test_unicode_round_trip_astral_plane(self):
+        # Encoder emits surrogate pairs for astral code points; decoder must
+        # combine them back into a single character.
+        for cp in (0x1F600, 0x1F1E6, 0x1D11E):
+            ch = chr(cp)
+            raw = ("{\\rtf1\\ansi " + escape_cocoa_rtf(ch) + "}").encode("ascii")
+            assert rtf_to_plain(raw) == [ch], (hex(cp), escape_cocoa_rtf(ch))
+
+    def test_negative_unicode_escape(self):
+        # Signed 16-bit shorts appear as negative values for astral chars.
+        raw = ("{\\rtf1\\ansi \\u-10179?}").encode("ascii")
+        assert rtf_to_plain(raw) == [chr(55357)]
+
 
 class TestProToSongTexts:
     def test_round_trip(self):
