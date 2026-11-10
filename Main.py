@@ -17,6 +17,7 @@ from SongEditorPro7Generic import (save_song, get_text_block_names, split_slides
 from single_export import save_single
 from melodii import saved_song_names, save_json_to_melodii, load_json_from_melodii
 from autocorrect import find_typos, get_spellchecker
+from undo_stack import UndoStack
 from tkinterdnd2 import DND_FILES, TkinterDnD
 import pymupdf as fitz
 
@@ -237,6 +238,56 @@ class SongEditorApp(TkinterDnD.Tk):
     def bind_text_shortcuts(self, widget):
         widget.bind("<Control-a>", self._select_all_text)
         widget.bind("<Control-A>", self._select_all_text)
+        widget.bind("<Control-z>", self._undo_text_edit)
+        widget.bind("<Control-Shift-Z>", self._redo_text_edit)
+        widget.bind("<Control-y>", self._redo_text_edit)
+
+    def _undo_text_edit(self, event=None):
+        w = event.widget if event is not None else None
+        if w is None or not isinstance(w, tk.Text):
+            return "break"
+        try:
+            w.edit_undo()
+        except tk.TclError:
+            pass
+        return "break"
+
+    def _redo_text_edit(self, event=None):
+        w = event.widget if event is not None else None
+        if w is None or not isinstance(w, tk.Text):
+            return "break"
+        try:
+            w.edit_redo()
+        except tk.TclError:
+            pass
+        return "break"
+
+    def _on_arrangement_change(self, event=None):
+        if self._arrangement_restoring:
+            return
+        self._arrangement_undo.push(self.arrangement_order.get())
+        self._schedule_preview_refresh()
+
+    def _set_arrangement_text(self, value):
+        self._arrangement_restoring = True
+        self.arrangement_order.delete(0, tk.END)
+        self.arrangement_order.insert(0, value)
+        self._arrangement_restoring = False
+        self._arrangement_undo.push(value)
+        self._schedule_preview_refresh()
+
+    def _restore_arrangement(self, value):
+        if value is None:
+            return
+        self._set_arrangement_text(value)
+
+    def _undo_arrangement(self, event=None):
+        self._restore_arrangement(self._arrangement_undo.undo())
+        return "break"
+
+    def _redo_arrangement(self, event=None):
+        self._restore_arrangement(self._arrangement_undo.redo())
+        return "break"
 
     def _select_all_text(self, event):
         event.widget.tag_add("sel", "1.0", "end-1c")
@@ -379,8 +430,7 @@ class SongEditorApp(TkinterDnD.Tk):
 
         def apply():
             items = [arr_lb.get(i) for i in range(arr_lb.size())]
-            self.arrangement_order.delete(0, tk.END)
-            self.arrangement_order.insert(0, ", ".join(items))
+            self._set_arrangement_text(", ".join(items))
             win.destroy()
 
         tb.Button(win, text="Apply", bootstyle="success", command=apply).pack(pady=10)
@@ -452,6 +502,13 @@ class SongEditorApp(TkinterDnD.Tk):
         self.arrangement_order.insert(0, "Verse 1, Chorus, Verse 2, Chorus, Bridge, Chorus")
         self.arrangement_order.grid(row=1, column=1, columnspan=4, padx=5, pady=(5,0), sticky="ew")
         self.bind_unicode_fix(self.arrangement_order)
+        self._arrangement_undo = UndoStack(self.arrangement_order.get())
+        self._arrangement_restoring = False
+        self.arrangement_order.bind("<KeyRelease>", self._on_arrangement_change)
+        self.arrangement_order.bind("<<Paste>>", self._on_arrangement_change)
+        self.arrangement_order.bind("<Control-z>", self._undo_arrangement)
+        self.arrangement_order.bind("<Control-Shift-Z>", self._redo_arrangement)
+        self.arrangement_order.bind("<Control-y>", self._redo_arrangement)
         tb.Button(header, text="Edit Arrangement", bootstyle="secondary-outline", command=self.edit_arrangement).grid(row=1, column=5, columnspan=2, padx=5, pady=(5,0))
 
         self.theme_btn = tb.Button(header, text="Light Mode", bootstyle="secondary-outline", command=self.toggle_theme)
@@ -1093,8 +1150,7 @@ class SongEditorApp(TkinterDnD.Tk):
         self.song_title.set("")
         self.update_number_widget()
         self.update_single_number_widget()
-        self.arrangement_order.delete(0, tk.END)
-        self.arrangement_order.insert(0, "Verse 1, Chorus, Verse 2, Chorus, Bridge, Chorus")
+        self._set_arrangement_text("Verse 1, Chorus, Verse 2, Chorus, Bridge, Chorus")
         self.show_message("Started a new song.")
         self._schedule_preview_refresh()
 
