@@ -61,6 +61,8 @@ parts of the format this app relies on.
 - **Autosave** – the song is saved as `.json` to the output folder after a short
   debounce while you type.
 - **Keyboard shortcuts** – `Ctrl+S` save, `Ctrl+O` open, `Ctrl+N` new song.
+- **Undo/redo** – `Ctrl+Z` / `Ctrl+Y` in every text box; arrangement order edits
+  are undoable too (custom undo stack).
 - **Error dialogs** – failures are shown in a dialog and logged to `logs\app.log`.
 - **CI** – backend tests run on every push/PR (GitHub Actions).
 - **RTF engine** – encode/decode moved into `rtf_engine.py` and covered by tests.
