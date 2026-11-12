@@ -126,6 +126,7 @@ class SongEditorApp(TkinterDnD.Tk):
         self._syncing_single = False
         self._preview_refresh_job = None
         self._autosave_job = None
+        self._last_focused_edit = None
         if template_path is _UNSET:
             self.template_path = self.app_config.get("template_path", None)
         else:
@@ -141,8 +142,145 @@ class SongEditorApp(TkinterDnD.Tk):
         self.bind_all("<Control-s>", self._on_shortcut_save)
         self.bind_all("<Control-o>", self._on_shortcut_open)
         self.bind_all("<Control-n>", self._on_shortcut_new)
+        self.bind_all("<Control-z>", self._menu_undo)
+        self.bind_all("<Control-Shift-Z>", self._menu_redo)
+        self.bind_all("<Control-y>", self._menu_redo)
 
         self.init_ui()
+        self.init_menu()
+
+    # ---------------------------------------------------------
+    # MENU BAR
+    # ---------------------------------------------------------
+    def init_menu(self):
+        self.menu = tk.Menu(self)
+        self.configure(menu=self.menu)
+
+        file_menu = tk.Menu(self.menu, tearoff=0)
+        self.menu.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="New Song", accelerator="Ctrl+N", command=self.new_song)
+        file_menu.add_command(label="Open…", accelerator="Ctrl+O", command=self.open_file)
+        file_menu.add_command(label="Save", accelerator="Ctrl+S", command=self.save_song_action)
+        file_menu.add_separator()
+        file_menu.add_command(label="Download as Single", command=self.download_single_action)
+        file_menu.add_command(label="Import from Melodii…", command=self.import_from_melodii_action)
+        file_menu.add_separator()
+        file_menu.add_command(label="Load Template…", command=self.load_template)
+        file_menu.add_command(label="Choose Output Folder…", command=self.choose_output_folder)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", accelerator="Alt+F4", command=self.destroy)
+
+        edit_menu = tk.Menu(self.menu, tearoff=0)
+        self.menu.add_cascade(label="Edit", menu=edit_menu)
+        edit_menu.add_command(label="Undo", accelerator="Ctrl+Z", command=self._menu_undo)
+        edit_menu.add_command(label="Redo", accelerator="Ctrl+Y", command=self._menu_redo)
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Select All", accelerator="Ctrl+A", command=self._menu_select_all)
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Check Typos", command=self.check_typos_action)
+        edit_menu.add_command(label="Edit Arrangement…", command=self.edit_arrangement)
+
+        view_menu = tk.Menu(self.menu, tearoff=0)
+        self.menu.add_cascade(label="View", menu=view_menu)
+        view_menu.add_command(label="Translate View", command=lambda: self.notebook.select(self.compare_tab))
+        view_menu.add_command(label="Single View", command=lambda: self.notebook.select(self.single_tab))
+        view_menu.add_command(label="Slide Preview", command=lambda: self.notebook.select(self.preview_tab))
+        view_menu.add_command(label="Edit Group Names", command=lambda: self.notebook.select(self.groupnames_tab))
+        view_menu.add_separator()
+        view_menu.add_checkbutton(label="Primary Language Only",
+                                  variable=self.preview_primary_only,
+                                  command=self._schedule_preview_refresh)
+        view_menu.add_separator()
+        view_menu.add_command(label="Light/Dark Mode", command=self.toggle_theme)
+
+        help_menu = tk.Menu(self.menu, tearoff=0)
+        self.menu.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="Keyboard Shortcuts…", command=self.show_shortcuts_dialog)
+        help_menu.add_command(label="Open Log Folder", command=self.open_log_folder)
+        help_menu.add_separator()
+        help_menu.add_command(label="About", command=self.show_about_dialog)
+
+    def _focus_widget(self):
+        try:
+            return self.focus_get()
+        except Exception:
+            return None
+
+    def _menu_undo(self, event=None):
+        w = self._active_edit_widget()
+        if isinstance(w, tk.Text):
+            try:
+                w.edit_undo()
+            except tk.TclError:
+                pass
+        elif w is self.arrangement_order:
+            self._undo_arrangement()
+        return "break"
+
+    def _menu_redo(self, event=None):
+        w = self._active_edit_widget()
+        if isinstance(w, tk.Text):
+            try:
+                w.edit_redo()
+            except tk.TclError:
+                pass
+        elif w is self.arrangement_order:
+            self._redo_arrangement()
+        return "break"
+
+    def _menu_select_all(self, event=None):
+        w = self._active_edit_widget()
+        if isinstance(w, tk.Text):
+            w.tag_add("sel", "1.0", "end-1c")
+            w.mark_set("insert", "1.0")
+            w.see("insert")
+        elif w is not None and hasattr(w, "select_range"):
+            w.select_range(0, tk.END)
+            w.icursor(tk.END)
+        return "break"
+
+    def show_shortcuts_dialog(self):
+        shortcuts = (
+            "File\n"
+            "  Ctrl+N   New song\n"
+            "  Ctrl+O   Open .json / .pro\n"
+            "  Ctrl+S   Save\n"
+            "\n"
+            "Edit\n"
+            "  Ctrl+Z   Undo\n"
+            "  Ctrl+Y   Redo (also Ctrl+Shift+Z)\n"
+            "  Ctrl+A   Select all\n"
+        )
+        try:
+            tb.dialogs.Messagebox.show_info(shortcuts, title="Keyboard Shortcuts", parent=self)
+        except Exception:
+            self.show_message(shortcuts)
+
+    def show_about_dialog(self):
+        about = (
+            "ProPresenter 7 Song Editor\n"
+            "Version 1.0\n\n"
+            "Turns multilingual song lyrics into ProPresenter 7 presentations.\n"
+            "Template-driven, with PDF/Melodii import, round-trip .pro editing,\n"
+            "spell checking and slide preview.\n\n"
+            "Built with Python, Tkinter/ttkbootstrap and protobuf."
+        )
+        try:
+            tb.dialogs.Messagebox.show_info(about, title="About", parent=self)
+        except Exception:
+            self.show_message(about)
+
+    def open_log_folder(self):
+        try:
+            path = os.path.abspath(LOG_DIR)
+            os.makedirs(path, exist_ok=True)
+            if os.name == "nt":
+                os.startfile(path)
+            else:
+                import subprocess
+                subprocess.Popen(["xdg-open", path])
+        except Exception as e:
+            self.show_message("Could not open log folder: " + str(e))
 
     def handle_pdf_drop(self, event, target_name=None):
         path = event.data.strip("{}")
@@ -241,6 +379,18 @@ class SongEditorApp(TkinterDnD.Tk):
         widget.bind("<Control-z>", self._undo_text_edit)
         widget.bind("<Control-Shift-Z>", self._redo_text_edit)
         widget.bind("<Control-y>", self._redo_text_edit)
+        widget.bind("<FocusIn>", self._on_edit_focus_in)
+
+    def _on_edit_focus_in(self, event=None):
+        self._last_focused_edit = event.widget if event is not None else None
+
+    def _active_edit_widget(self):
+        """The widget menu undo/redo should act on: focused edit widget, or the
+        last one that had focus (focus_get() can be None under automation)."""
+        w = self._focus_widget()
+        if isinstance(w, tk.Text) or w is self.arrangement_order:
+            return w
+        return self._last_focused_edit
 
     def _undo_text_edit(self, event=None):
         w = event.widget if event is not None else None
@@ -506,6 +656,7 @@ class SongEditorApp(TkinterDnD.Tk):
         self._arrangement_restoring = False
         self.arrangement_order.bind("<KeyRelease>", self._on_arrangement_change)
         self.arrangement_order.bind("<<Paste>>", self._on_arrangement_change)
+        self.arrangement_order.bind("<FocusIn>", self._on_edit_focus_in)
         self.arrangement_order.bind("<Control-z>", self._undo_arrangement)
         self.arrangement_order.bind("<Control-Shift-Z>", self._redo_arrangement)
         self.arrangement_order.bind("<Control-y>", self._redo_arrangement)
